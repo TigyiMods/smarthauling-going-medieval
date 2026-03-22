@@ -1,4 +1,4 @@
-using SmartHauling.Runtime;
+﻿using SmartHauling.Runtime;
 using UnityEngine;
 
 namespace SmartHauling.Runtime.Tests;
@@ -6,73 +6,95 @@ namespace SmartHauling.Runtime.Tests;
 public sealed class LocalFillPlannerTests
 {
     [Fact]
-    public void GetAnchorDistance_UsesNearestAnchor()
+    public void GetAnchorDistance_WhenMultipleAnchorsExist_ReturnsNearestDistance()
     {
-        var distance = LocalFillPlanner.GetAnchorDistance(
-            new[]
-            {
-                new Vector3(0f, 0f, 0f),
-                new Vector3(10f, 0f, 0f)
-            },
-            fallbackAnchorPosition: null,
-            candidatePosition: new Vector3(3f, 0f, 0f));
+        // Arrange
+        var anchorPositions = new[]
+        {
+            new Vector3(0f, 0f, 0f),
+            new Vector3(10f, 0f, 0f)
+        };
+        Vector3? fallbackAnchorPosition = null;
+        var candidatePosition = new Vector3(3f, 0f, 0f);
 
+        // Act
+        var distance = LocalFillPlanner.GetAnchorDistance(anchorPositions, fallbackAnchorPosition, candidatePosition);
+
+        // Assert
         Assert.Equal(3f, distance, 3);
     }
 
     [Fact]
-    public void GetAnchorDistance_UsesFallbackWhenAnchorsMissing()
+    public void GetAnchorDistance_WhenNoAnchorsExist_UsesFallbackAnchor()
     {
-        var distance = LocalFillPlanner.GetAnchorDistance(
-            System.Array.Empty<Vector3>(),
-            new Vector3(5f, 0f, 0f),
-            new Vector3(8f, 0f, 0f));
+        // Arrange
+        var anchorPositions = System.Array.Empty<Vector3>();
+        Vector3? fallbackAnchorPosition = new Vector3(5f, 0f, 0f);
+        var candidatePosition = new Vector3(8f, 0f, 0f);
 
+        // Act
+        var distance = LocalFillPlanner.GetAnchorDistance(anchorPositions, fallbackAnchorPosition, candidatePosition);
+
+        // Assert
         Assert.Equal(3f, distance, 3);
     }
 
     [Fact]
-    public void GetAnchorDistance_ReturnsZeroWithoutAnyAnchor()
+    public void GetAnchorDistance_WhenNoAnchorInformationExists_ReturnsZero()
     {
-        var distance = LocalFillPlanner.GetAnchorDistance(
-            System.Array.Empty<Vector3>(),
-            fallbackAnchorPosition: null,
-            candidatePosition: new Vector3(8f, 0f, 0f));
+        // Arrange
+        var anchorPositions = System.Array.Empty<Vector3>();
+        Vector3? fallbackAnchorPosition = null;
+        var candidatePosition = new Vector3(8f, 0f, 0f);
 
+        // Act
+        var distance = LocalFillPlanner.GetAnchorDistance(anchorPositions, fallbackAnchorPosition, candidatePosition);
+
+        // Assert
         Assert.Equal(0f, distance, 3);
     }
 
     [Fact]
-    public void CalculateCandidateScore_PrefersCloserPatch()
+    public void CalculateCandidateScore_WhenPatchIsCloser_ReturnsHigherScore()
     {
-        var nearPatch = LocalFillPlanner.CalculateCandidateScore(
+        // Arrange
+        var nearPatchScore = LocalFillPlanner.CalculateCandidateScore(
             requestedAmount: 20,
             distance: 4f,
             patchDistance: 1f,
             hasExistingDropPlan: false);
-        var farPatch = LocalFillPlanner.CalculateCandidateScore(
+        var farPatchScore = LocalFillPlanner.CalculateCandidateScore(
             requestedAmount: 20,
             distance: 4f,
             patchDistance: 6f,
             hasExistingDropPlan: false);
 
-        Assert.True(nearPatch > farPatch);
+        // Act
+        var scoreDelta = nearPatchScore - farPatchScore;
+
+        // Assert
+        Assert.True(scoreDelta > 0f);
     }
 
     [Fact]
-    public void CalculateCandidateScore_PrefersExistingDropPlan()
+    public void CalculateCandidateScore_WhenDropPlanAlreadyExists_ReturnsHigherScore()
     {
-        var withoutExistingPlan = LocalFillPlanner.CalculateCandidateScore(
+        // Arrange
+        var scoreWithoutExistingPlan = LocalFillPlanner.CalculateCandidateScore(
             requestedAmount: 20,
             distance: 4f,
             patchDistance: 1f,
             hasExistingDropPlan: false);
-        var withExistingPlan = LocalFillPlanner.CalculateCandidateScore(
+        var scoreWithExistingPlan = LocalFillPlanner.CalculateCandidateScore(
             requestedAmount: 20,
             distance: 4f,
             patchDistance: 1f,
             hasExistingDropPlan: true);
 
-        Assert.True(withExistingPlan > withoutExistingPlan);
+        // Act
+        var scoreDelta = scoreWithExistingPlan - scoreWithoutExistingPlan;
+
+        // Assert
+        Assert.True(scoreDelta > 0f);
     }
 }

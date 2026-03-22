@@ -45,3 +45,12 @@ If AI agents or tools materially contributed to a change:
 - Run `dotnet build` before committing code changes.
 - Run `dotnet test` when changing planner, policy, or other test-covered logic.
 - Avoid large refactors without preserving behavior and adding or updating tests where practical.
+
+## Test Standards
+
+- Use xUnit for unit tests in this repository.
+- Follow the AAA pattern explicitly: Arrange, Act, Assert.
+- Prefer method names in the `MethodName_Scenario_ExpectedOutcome` style.
+- Use FakeItEasy when isolating collaborators or interface-based dependencies.
+- Do not force mocks into pure-function tests; prefer direct inputs there.
+- Prefer deterministic tests with one clear Act step and behavior-focused assertions.
