@@ -1,10 +1,13 @@
-.git/
+﻿.git/
 .vs/
 .idea/
 
 # Local tooling and scratch files
 .tools/
 .tmp_reflect.cs
+inspect_*.ps1
+runtime/Deploy-To-BepInEx.ps1
+docs/decompiled/
 
 # Build outputs
 bin/
