@@ -5,6 +5,7 @@ using NSMedieval;
 using NSMedieval.Goap;
 using NSMedieval.Model;
 using NSMedieval.State;
+using UnityEngine;
 
 namespace SmartHauling.Runtime;
 
@@ -39,6 +40,8 @@ internal sealed class CoordinatedStockpileExecutionState
     public HashSet<string> FailedDropKeys { get; } = new();
 
     public bool DropPhaseLocked { get; set; }
+
+    public Vector3? LastPickupPosition { get; set; }
 }
 
 internal static class CoordinatedStockpileExecutionStore
@@ -118,6 +121,30 @@ internal static class CoordinatedStockpileExecutionStore
         }
 
         state.DropPhaseLocked = false;
+    }
+
+    public static void RememberPickupPosition(Goal goal, Vector3 position)
+    {
+        if (goal == null)
+        {
+            return;
+        }
+
+        GetOrCreate(goal).LastPickupPosition = position;
+    }
+
+    public static bool TryGetLastPickupPosition(Goal goal, out Vector3 position)
+    {
+        if (goal != null &&
+            TryGet(goal, out var state) &&
+            state.LastPickupPosition.HasValue)
+        {
+            position = state.LastPickupPosition.Value;
+            return true;
+        }
+
+        position = default;
+        return false;
     }
 
     public static bool HasFailedDrop(Goal goal, string resourceId, IStorage storage, Vec3Int position)

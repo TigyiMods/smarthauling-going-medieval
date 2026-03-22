@@ -177,6 +177,7 @@ internal static class CoordinatedStockpileExecutor
         {
             if (status == ActionCompletionStatus.Success)
             {
+                RememberCurrentPickupAnchor(goal);
                 CompleteCurrentPickupTarget(goal);
                 if (goal.AgentOwner is IStorageAgent { Storage: not null } storageAgent)
                 {
@@ -366,13 +367,18 @@ internal static class CoordinatedStockpileExecutor
         }
 
         DynamicFillCandidate? bestCandidate = null;
+        var fillAnchorPiles = GetFillAnchorPiles(goal);
+        var hasFallbackAnchor = CoordinatedStockpileExecutionStore.TryGetLastPickupPosition(goal, out var fallbackAnchorPosition);
         foreach (var pile in HaulingDecisionTracePatch.GetHaulablePileSnapshot()
                      .Where(pile => pile != null && !pile.HasDisposed)
-                     .OrderBy(pile => Vector3.Distance(creature.GetPosition(), pile.GetPosition()))
+                     .OrderBy(pile => GetFillAnchorDistance(fillAnchorPiles, hasFallbackAnchor ? fallbackAnchorPosition : (Vector3?)null, pile))
+                     .ThenBy(pile => Vector3.Distance(creature.GetPosition(), pile.GetPosition()))
                      .Take(MaxFillCandidatesToInspect))
         {
+            var patchDistance = GetFillAnchorDistance(fillAnchorPiles, hasFallbackAnchor ? fallbackAnchorPosition : (Vector3?)null, pile);
             if (reservedOrQueuedPiles.Contains(pile) ||
                 Vector3.Distance(creature.GetPosition(), pile.GetPosition()) > RemainingCapacityFillExtent ||
+                patchDistance > RemainingCapacityFillExtent ||
                 HaulFailureBackoffStore.IsCoolingDown(pile) ||
                 !ClusterOwnershipStore.CanUsePile(creature, pile) ||
                 !CanReachPile(goal, pile) ||
@@ -409,6 +415,7 @@ internal static class CoordinatedStockpileExecutor
                 requestedAmount,
                 orderedStorages,
                 Vector3.Distance(creature.GetPosition(), pile.GetPosition()),
+                patchDistance,
                 TryGetPlannedStorages(goal, storedResource.BlueprintId, out _));
             if (bestCandidate == null || candidate.Score > bestCandidate.Score)
             {
@@ -451,7 +458,7 @@ internal static class CoordinatedStockpileExecutor
 
         DiagnosticTrace.Info(
             "coord.exec",
-            $"Extended pickup plan for {goal.AgentOwner}: resource={bestCandidate.Blueprint.GetID()}, requested={bestCandidate.RequestedAmount}, free={storage.GetFreeSpace():0.##}, distance={bestCandidate.Distance:0.0}, prepend={prependToFront}",
+            $"Extended pickup plan for {goal.AgentOwner}: resource={bestCandidate.Blueprint.GetID()}, requested={bestCandidate.RequestedAmount}, free={storage.GetFreeSpace():0.##}, distance={bestCandidate.Distance:0.0}, patchDistance={bestCandidate.PatchDistance:0.0}, prepend={prependToFront}",
             120);
         return true;
     }
@@ -795,6 +802,89 @@ internal static class CoordinatedStockpileExecutor
         return false;
     }
 
+    private static IReadOnlyList<ResourcePileInstance> GetFillAnchorPiles(Goal goal)
+    {
+        if (CoordinatedStockpileTaskStore.TryGet(goal, out var task))
+        {
+            var planned = task.PlannedPickups
+                .Where(pile => pile != null && !pile.HasDisposed)
+                .ToList();
+            if (planned.Count > 0)
+            {
+                return planned;
+            }
+        }
+
+        var queued = goal.GetTargetQueue(TargetIndex.A)
+            .Select(target => target.GetObjectAs<ResourcePileInstance>())
+            .Where(pile => pile != null && !pile.HasDisposed)
+            .Cast<ResourcePileInstance>()
+            .ToList();
+        if (queued.Count > 0)
+        {
+            return queued;
+        }
+
+        var current = goal.GetTarget(TargetIndex.A).GetObjectAs<ResourcePileInstance>();
+        if (current != null && !current.HasDisposed)
+        {
+            return new[] { current };
+        }
+
+        return System.Array.Empty<ResourcePileInstance>();
+    }
+
+    private static float GetFillAnchorDistance(
+        IReadOnlyList<ResourcePileInstance> anchorPiles,
+        Vector3? fallbackAnchorPosition,
+        ResourcePileInstance candidatePile)
+    {
+        if (candidatePile == null || candidatePile.HasDisposed)
+        {
+            return float.MaxValue;
+        }
+
+        var nearest = float.MaxValue;
+        if (anchorPiles != null)
+        {
+            foreach (var anchorPile in anchorPiles)
+            {
+                if (anchorPile == null || anchorPile.HasDisposed)
+                {
+                    continue;
+                }
+
+                var distance = Vector3.Distance(anchorPile.GetPosition(), candidatePile.GetPosition());
+                if (distance < nearest)
+                {
+                    nearest = distance;
+                }
+            }
+        }
+
+        if (fallbackAnchorPosition.HasValue)
+        {
+            var distance = Vector3.Distance(fallbackAnchorPosition.Value, candidatePile.GetPosition());
+            if (distance < nearest)
+            {
+                nearest = distance;
+            }
+        }
+
+        return nearest < float.MaxValue ? nearest : 0f;
+    }
+
+    private static void RememberCurrentPickupAnchor(StockpileHaulingGoal goal)
+    {
+        var pile = goal.GetTarget(TargetIndex.A).GetObjectAs<ResourcePileInstance>();
+        if (pile == null || pile.HasDisposed)
+        {
+            return;
+        }
+
+        CoordinatedStockpileExecutionStore.RememberPickupPosition(goal, pile.GetPosition());
+    }
+
     private static string DescribeInvalidPickupReason(StockpileHaulingGoal goal)
     {
         var pile = goal.GetTarget(TargetIndex.A).GetObjectAs<ResourcePileInstance>();
@@ -863,6 +953,7 @@ internal static class CoordinatedStockpileExecutor
             int requestedAmount,
             IReadOnlyList<IStorage> orderedStorages,
             float distance,
+            float patchDistance,
             bool hasExistingDropPlan)
         {
             Pile = pile;
@@ -870,6 +961,7 @@ internal static class CoordinatedStockpileExecutor
             RequestedAmount = requestedAmount;
             OrderedStorages = orderedStorages;
             Distance = distance;
+            PatchDistance = patchDistance;
             HasExistingDropPlan = hasExistingDropPlan;
         }
 
@@ -883,16 +975,19 @@ internal static class CoordinatedStockpileExecutor
 
         public float Distance { get; }
 
+        public float PatchDistance { get; }
+
         public bool HasExistingDropPlan { get; }
 
         public float Score
         {
             get
             {
-                var distancePenalty = Distance * 6f;
-                var amountScore = RequestedAmount * 4f;
-                var existingPlanBonus = HasExistingDropPlan ? 24f : 0f;
-                return amountScore + existingPlanBonus - distancePenalty;
+                var amountScore = RequestedAmount * 3f;
+                var existingPlanBonus = HasExistingDropPlan ? 20f : 0f;
+                var localPatchBonus = Mathf.Max(0f, 96f - (PatchDistance * 10f));
+                var distancePenalty = Distance * 2f;
+                return amountScore + existingPlanBonus + localPatchBonus - distancePenalty;
             }
         }
     }

@@ -1,6 +1,7 @@
 using NSMedieval.Components;
 using NSMedieval.Goap;
 using NSMedieval.State.WorkerJobs;
+using SmartHauling.Runtime.Goals;
 
 namespace SmartHauling.Runtime.Patches;
 
@@ -26,6 +27,11 @@ internal static class CoordinatedStockpileGoalTriggerPatch
         if (__instance.AgentOwner is IStorageAgent { Storage: not null } storageAgent &&
             !storageAgent.Storage.IsEmpty())
         {
+            __instance.ForceNextGoal(new SmartUnloadGoal(__instance));
+            DiagnosticTrace.Info(
+                "unload",
+                $"Forced next SmartUnloadGoal for {__instance.AgentOwner}: carry={storageAgent.Storage.GetTotalStoredCount()}",
+                80);
             return;
         }
 

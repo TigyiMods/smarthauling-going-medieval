@@ -684,6 +684,7 @@ internal static class HaulingDecisionTracePatch
                 return DestinationPlanOutcome.Failed("missing-pile-source");
             }
 
+            var mixedCandidates = new List<ResourcePileInstance>();
             foreach (var pileObject in allPileInstances)
             {
                 if (pileObject is not ResourcePileInstance pile ||
@@ -694,6 +695,13 @@ internal static class HaulingDecisionTracePatch
                     continue;
                 }
 
+                mixedCandidates.Add(pile);
+            }
+
+            foreach (var pile in mixedCandidates
+                         .OrderBy(candidate => GetNearestPatchDistance(plannedPiles, candidate))
+                         .ThenBy(candidate => Vector3.Distance(firstPile.GetPosition(), candidate.GetPosition())))
+            {
                 var storedResource = pile.GetStoredResource();
                 if (storedResource == null || storedResource.HasDisposed)
                 {

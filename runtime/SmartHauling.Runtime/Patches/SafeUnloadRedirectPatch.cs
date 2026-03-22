@@ -59,6 +59,12 @@ internal static class SafeUnloadRedirectPatch
     [HarmonyPostfix]
     private static void OnGoalEndedPostfix(WorkerGoapAgent __instance, Goal goal)
     {
+        if (goal is SmartUnloadGoal)
+        {
+            HandleSmartUnloadEnd(__instance, goal);
+            return;
+        }
+
         var context = PopContext(__instance, goal);
         if (context == null)
         {
@@ -125,6 +131,42 @@ internal static class SafeUnloadRedirectPatch
                 SchedulingAgents.Remove(__instance);
             }
         }
+    }
+
+    private static void HandleSmartUnloadEnd(WorkerGoapAgent agent, Goal goal)
+    {
+        if (!RuntimeActivation.IsActive ||
+            agent == null ||
+            agent.HasDisposed ||
+            agent.AgentOwner is not CreatureBase creature ||
+            creature.HasDisposed ||
+            agent.AgentOwner is not IStorageAgent { Storage: not null } storageAgent)
+        {
+            return;
+        }
+
+        var remaining = storageAgent.Storage.GetTotalStoredCount();
+        if (remaining <= 0)
+        {
+            UnloadCarryContextStore.Clear(creature);
+            return;
+        }
+
+        if (CanAttemptSmartUnload(agent, goal, creature, storageAgent.Storage))
+        {
+            DiagnosticTrace.Info(
+                "unload",
+                $"SmartUnloadGoal ended with carry still present for {creature}, leaving retry to next idle tick: carry={remaining}",
+                20);
+            return;
+        }
+
+        DiagnosticTrace.Info(
+            "unload",
+            $"SmartUnloadGoal ended with no valid storage for {creature}, dropping carry to ground: carry={remaining}, carried=[{CarrySummaryUtil.Summarize(storageAgent.Storage)}]",
+            20);
+        UnloadCarryContextStore.Clear(creature);
+        creature.DropStorage();
     }
 
     [HarmonyPatch(typeof(CreatureBase), nameof(CreatureBase.DropStorage))]
