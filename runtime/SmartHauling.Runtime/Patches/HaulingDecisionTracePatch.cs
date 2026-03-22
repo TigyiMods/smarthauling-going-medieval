@@ -346,73 +346,17 @@ internal static class HaulingDecisionTracePatch
     private static StockpileTaskSeed? TryCreateTaskSeed(
         ResourcePileInstance firstPile)
     {
-        if (firstPile == null ||
-            firstPile.HasDisposed ||
-            HaulFailureBackoffStore.IsCoolingDown(firstPile))
-        {
-            return null;
-        }
-
-        var storedResource = firstPile.GetStoredResource();
-        if (storedResource == null || storedResource.HasDisposed)
-        {
-            return null;
-        }
-
-        var sameTypePiles = GetAllPileInstances()
-            .Where(pile => !pile.HasDisposed && pile.Blueprint == firstPile.Blueprint)
-            .ToList();
-        if (sameTypePiles.Count == 0)
-        {
-            return null;
-        }
-
-        var usePatchSweep = ShouldUsePatchSweep(firstPile, sameTypePiles);
-        var fullSourcePatchPiles = usePatchSweep
-            ? BuildPatchComponent(firstPile, sameTypePiles)
-            : new HashSet<ResourcePileInstance>(
-                sameTypePiles.Where(pile => Vector3.Distance(firstPile.GetPosition(), pile.GetPosition()) <= SourceClusterExtent),
-                ReferenceEqualityComparer<ResourcePileInstance>.Instance);
-        fullSourcePatchPiles.Add(firstPile);
-
-        var sourcePatchPiles = BuildSourceSlice(firstPile, storedResource.Blueprint, fullSourcePatchPiles);
-
-        var mixedPatchPiles = GetAllPileInstances()
-            .Where(pile =>
-                !pile.HasDisposed &&
-                !sourcePatchPiles.Contains(pile) &&
-                IsNearPlannedSourcePatch(sourcePatchPiles, pile))
-            .ToList();
-
-        var estimatedTotal = SumAmounts(sourcePatchPiles) + SumAmounts(mixedPatchPiles);
-        if (estimatedTotal <= 0)
-        {
-            return null;
-        }
-
-        var estimatedPileCount = sourcePatchPiles.Count + mixedPatchPiles.Count;
-        var estimatedResourceTypes = sourcePatchPiles
-            .Concat(mixedPatchPiles)
-            .Select(pile => pile.BlueprintId)
-            .Distinct()
-            .Count();
-        var patchExtent = GetPatchExtent(firstPile, sourcePatchPiles.Concat(mixedPatchPiles));
-        var score = HaulingScore.CalculateTaskSeedScore(
-            estimatedTotal,
-            patchExtent,
-            estimatedResourceTypes,
-            estimatedPileCount,
-            firstPile.BlueprintId.Contains("sapling", System.StringComparison.OrdinalIgnoreCase));
-
-        return new StockpileTaskSeed(
+        return StockpileTaskSeedFactory.TryCreate(
             firstPile,
-            sourcePatchPiles.ToList(),
-            StoragePriorityUtil.GetEffectiveSourcePriority(firstPile),
-            estimatedTotal,
-            estimatedResourceTypes,
-            estimatedPileCount,
-            usePatchSweep,
-            score);
+            GetAllPileInstances(),
+            SourceClusterExtent,
+            MixedGroundHarvestExtent,
+            PatchSweepAmountThreshold,
+            PatchSweepCountThreshold,
+            PatchSweepExtent,
+            PatchSweepLinkExtent,
+            MinimumSourceSliceWeightBudget,
+            StockpileTaskBoard.GetNominalWorkerFreeSpace());
     }
 
     private static int RetargetStorageAndGetBudget(StockpileHaulingGoal goal, ResourcePileInstance firstPile, ref IStorage? firstStorage)
@@ -836,59 +780,6 @@ internal static class HaulingDecisionTracePatch
     private static bool IsNearPlannedSourcePatch(IReadOnlyCollection<ResourcePileInstance> plannedPiles, ResourcePileInstance candidatePile)
     {
         return GetNearestPatchDistance(plannedPiles, candidatePile) <= MixedGroundHarvestExtent;
-    }
-
-    private static IReadOnlyList<ResourcePileInstance> BuildSourceSlice(
-        ResourcePileInstance firstPile,
-        Resource sampleResource,
-        IReadOnlyCollection<ResourcePileInstance> fullSourcePatchPiles)
-    {
-        var sliceBudgetWeight = GetNominalSourceSliceWeightBudget(sampleResource);
-        var orderedPiles = fullSourcePatchPiles
-            .Where(pile => pile != null && !pile.HasDisposed)
-            .OrderBy(pile => ReferenceEquals(pile, firstPile) ? 0 : 1)
-            .ThenBy(pile => Vector3.Distance(firstPile.GetPosition(), pile.GetPosition()))
-            .ThenByDescending(pile => pile.GetStoredResource()?.Amount ?? 0)
-            .ToList();
-
-        var slice = new List<ResourcePileInstance>();
-        var accumulatedWeight = 0f;
-        foreach (var pile in orderedPiles)
-        {
-            var resource = pile.GetStoredResource();
-            if (resource == null || resource.HasDisposed)
-            {
-                continue;
-            }
-
-            var pileWeight = GetNominalPileWeight(resource);
-            if (pileWeight <= 0f)
-            {
-                continue;
-            }
-
-            if (slice.Count > 0 && accumulatedWeight >= sliceBudgetWeight)
-            {
-                break;
-            }
-
-            slice.Add(pile);
-            var remainingWeight = Mathf.Max(0f, sliceBudgetWeight - accumulatedWeight);
-            accumulatedWeight += slice.Count == 1
-                ? Mathf.Min(pileWeight, sliceBudgetWeight)
-                : Mathf.Min(pileWeight, Mathf.Max(0.01f, remainingWeight));
-            if (accumulatedWeight >= sliceBudgetWeight)
-            {
-                break;
-            }
-        }
-
-        if (slice.Count == 0)
-        {
-            slice.Add(firstPile);
-        }
-
-        return slice;
     }
 
     private static DestinationPlanOutcome ApplyResourceDestinationPlans(
@@ -1630,48 +1521,6 @@ internal static class HaulingDecisionTracePatch
         }
 
         return Math.Max(1, MaxCarryAmountRef(goal));
-    }
-
-    private static float GetNominalSourceSliceWeightBudget(Resource sampleResource)
-    {
-        var nominalWorkerFreeSpace = Mathf.Max(MinimumSourceSliceWeightBudget, StockpileTaskBoard.GetNominalWorkerFreeSpace());
-        if (sampleResource == null)
-        {
-            return nominalWorkerFreeSpace;
-        }
-
-        if (sampleResource.EquipmentBlueprint != null ||
-            (sampleResource.Category & (ResourceCategory.CtgCarcass | ResourceCategory.CtgStructure)) != ResourceCategory.None ||
-            (sampleResource.Category == ResourceCategory.None && sampleResource.GetID().Contains("trophy")))
-        {
-            return Mathf.Max(1f, sampleResource.Weight);
-        }
-
-        return nominalWorkerFreeSpace;
-    }
-
-    private static float GetNominalPileWeight(ResourceInstance resource)
-    {
-        if (resource == null || resource.HasDisposed)
-        {
-            return 0f;
-        }
-
-        var blueprint = resource.Blueprint;
-        if (blueprint == null)
-        {
-            return Mathf.Max(1f, resource.Amount);
-        }
-
-        if (blueprint.EquipmentBlueprint != null ||
-            (blueprint.Category & (ResourceCategory.CtgCarcass | ResourceCategory.CtgStructure)) != ResourceCategory.None ||
-            (blueprint.Category == ResourceCategory.None && blueprint.GetID().Contains("trophy")))
-        {
-            return Mathf.Max(1f, blueprint.Weight);
-        }
-
-        var unitWeight = Mathf.Max(0.01f, blueprint.Weight);
-        return Mathf.Max(unitWeight, resource.Amount * unitWeight);
     }
 
     private static void ResetGoalState(StockpileHaulingGoal goal)
