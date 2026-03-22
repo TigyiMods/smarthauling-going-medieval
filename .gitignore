@@ -1,0 +1,20 @@
+.git/
+.vs/
+.idea/
+
+# Local tooling and scratch files
+.tools/
+.tmp_reflect.cs
+
+# Build outputs
+bin/
+obj/
+
+# Logs and caches
+*.log
+*.cache
+
+# User-specific files
+*.user
+*.suo
+*.nupkg
