@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/runtime/">
+    <Project Path="runtime/SmartHauling.Runtime.Tests/SmartHauling.Runtime.Tests.csproj" />
+    <Project Path="runtime/SmartHauling.Runtime/SmartHauling.Runtime.csproj" />
+  </Folder>
+</Solution>

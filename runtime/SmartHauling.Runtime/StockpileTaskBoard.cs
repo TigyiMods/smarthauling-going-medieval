@@ -445,8 +445,7 @@ internal static class StockpileTaskBoard
     private static float GetAssignmentScore(CreatureBase creature, StockpileTaskSeed seed)
     {
         var distanceToSource = Vector3.Distance(creature.GetPosition(), seed.FirstPile.GetPosition());
-        var proximityBonus = Mathf.Max(0f, 48f - (distanceToSource * 1.5f));
-        return seed.Score + proximityBonus;
+        return HaulingScore.CalculateBoardAssignmentScore(seed.Score, distanceToSource);
     }
 
     private static bool SharesSourcePatch(StockpileTaskSeed left, StockpileTaskSeed right)

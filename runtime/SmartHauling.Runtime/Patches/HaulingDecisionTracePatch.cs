@@ -316,14 +316,11 @@ internal static class HaulingDecisionTracePatch
         }
 
         var pickupBudget = Math.Max(1, Mathf.Min(destinationBudget, requestedAmount));
-        var requestFit = requestedAmount <= 0
-            ? 1f
-            : Mathf.Clamp01((float)pickupBudget / requestedAmount);
-        var fillScore = Mathf.Sqrt(Mathf.Max(1, pickupBudget)) * 90f;
-        var fitScore = requestFit * 120f;
-        var pileScore = Mathf.Min(taskSeed.EstimatedPileCount, 12) * 6f;
-        var diversityScore = Mathf.Min(taskSeed.EstimatedResourceTypes, 4) * 14f;
-        var score = fillScore + fitScore + pileScore + diversityScore;
+        var score = HaulingScore.CalculateMaterializedSelectionScore(
+            pickupBudget,
+            requestedAmount,
+            taskSeed.EstimatedPileCount,
+            taskSeed.EstimatedResourceTypes);
 
         return new PlannedSeedSelection(
             firstPile,
@@ -343,8 +340,7 @@ internal static class HaulingDecisionTracePatch
     internal static float GetBoardClaimScore(CreatureBase creature, PlannedSeedSelection selection)
     {
         var distanceToSource = Vector3.Distance(creature.GetPosition(), selection.FirstPile.GetPosition());
-        var proximityBonus = Mathf.Max(0f, 48f - (distanceToSource * 1.5f));
-        return selection.Score + proximityBonus;
+        return HaulingScore.CalculateBoardAssignmentScore(selection.Score, distanceToSource);
     }
 
     private static StockpileTaskSeed? TryCreateTaskSeed(
@@ -401,16 +397,12 @@ internal static class HaulingDecisionTracePatch
             .Distinct()
             .Count();
         var patchExtent = GetPatchExtent(firstPile, sourcePatchPiles.Concat(mixedPatchPiles));
-        var amountScore = Mathf.Sqrt(Mathf.Max(1, estimatedTotal)) * 42f;
-        var densityScore = (estimatedTotal / Mathf.Max(6f, patchExtent)) * 8f;
-        var diversityBonus = estimatedResourceTypes * 70f;
-        var pileBonus = estimatedPileCount * 12f;
-        var patchBonus = firstPile.BlueprintId.Contains("sapling", System.StringComparison.OrdinalIgnoreCase) ? 60f : 0f;
-        var score = amountScore +
-                    densityScore +
-                    diversityBonus +
-                    pileBonus +
-                    patchBonus;
+        var score = HaulingScore.CalculateTaskSeedScore(
+            estimatedTotal,
+            patchExtent,
+            estimatedResourceTypes,
+            estimatedPileCount,
+            firstPile.BlueprintId.Contains("sapling", System.StringComparison.OrdinalIgnoreCase));
 
         return new StockpileTaskSeed(
             firstPile,
@@ -1313,16 +1305,7 @@ internal static class HaulingDecisionTracePatch
 
     private static bool CanReachPile(StockpileHaulingGoal goal, ResourcePileInstance pile)
     {
-        if (goal.AgentOwner is not IPathfindingAgent pathfindingAgent)
-        {
-            return true;
-        }
-
-        return PathfinderUtil.GetClosestReachable(
-            pathfindingAgent,
-            new[] { pile },
-            target => ReferenceEquals(target, pile),
-            _ => 0f) is ResourcePileInstance;
+        return HaulSourcePolicy.CanReachPile(goal, pile);
     }
 
     private static float GetNearestPatchDistance(IReadOnlyCollection<ResourcePileInstance> plannedPiles, ResourcePileInstance candidatePile)
@@ -1487,36 +1470,9 @@ internal static class HaulingDecisionTracePatch
 
     private static bool CanUseAsCentralHaulSource(ResourcePileInstance? pile)
     {
-        if (pile == null || pile.HasDisposed)
-        {
-            return false;
-        }
-
-        if (pile.PlacedOnStorage == null)
-        {
-            return true;
-        }
-
-        var sourcePriority = StoragePriorityUtil.GetEffectiveSourcePriority(pile);
-        if (sourcePriority == ZonePriority.None)
-        {
-            return false;
-        }
-
-        var storedResource = pile.GetStoredResource();
-        if (storedResource == null || storedResource.HasDisposed)
-        {
-            return false;
-        }
-
-        return StorageCandidatePlanner.GetAllStoragesSnapshot().Any(storage =>
-            storage != null &&
-            !ReferenceEquals(storage, pile.PlacedOnStorage) &&
-            !storage.HasDisposed &&
-            !storage.Underwater &&
-            !storage.IsOnFire &&
-            storage.Priority > sourcePriority &&
-            storage.ResourcesFilter.IsValid(storedResource));
+        return HaulSourcePolicy.CanUseAsCentralHaulSource(
+            pile,
+            StorageCandidatePlanner.GetAllStoragesSnapshot());
     }
 
     private static void AddPileSequence(HashSet<ResourcePileInstance> target, IEnumerable? source)
@@ -1680,8 +1636,7 @@ internal static class HaulingDecisionTracePatch
 
     private static bool ValidatePile(HaulingBaseGoal goal, ResourcePileInstance pile)
     {
-        var method = AccessTools.Method(goal.GetType(), "ValidatePile");
-        return method != null && method.Invoke(goal, new object[] { pile }) is bool result && result;
+        return HaulSourcePolicy.ValidatePile(goal, pile);
     }
 
     private static int GetOptimisticPickupBudget(StockpileHaulingGoal goal, Resource blueprint)
