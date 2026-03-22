@@ -1310,37 +1310,17 @@ internal static class HaulingDecisionTracePatch
 
     private static float GetNearestPatchDistance(IReadOnlyCollection<ResourcePileInstance> plannedPiles, ResourcePileInstance candidatePile)
     {
-        var nearest = float.MaxValue;
-        foreach (var plannedPile in plannedPiles)
-        {
-            var distance = Vector3.Distance(plannedPile.GetPosition(), candidatePile.GetPosition());
-            if (distance < nearest)
-            {
-                nearest = distance;
-            }
-        }
-
-        return nearest;
+        return HaulGeometry.GetNearestPatchDistance(
+            plannedPiles.Select(plannedPile => plannedPile.GetPosition()),
+            candidatePile.GetPosition());
     }
 
     private static float GetPatchExtent(ResourcePileInstance firstPile, IEnumerable<ResourcePileInstance> piles)
     {
-        var maxDistance = 0f;
-        foreach (var pile in piles)
-        {
-            if (pile == null || pile.HasDisposed)
-            {
-                continue;
-            }
-
-            var distance = Vector3.Distance(firstPile.GetPosition(), pile.GetPosition());
-            if (distance > maxDistance)
-            {
-                maxDistance = distance;
-            }
-        }
-
-        return Mathf.Max(1f, maxDistance);
+        return HaulGeometry.GetPatchExtent(
+            firstPile.GetPosition(),
+            piles.Where(pile => pile != null && !pile.HasDisposed)
+                .Select(pile => pile.GetPosition()));
     }
 
     private static string BuildDecisionContext(StockpileHaulingGoal goal, ResourcePileInstance? firstPile, IStorage? firstStorage)
@@ -1537,25 +1517,24 @@ internal static class HaulingDecisionTracePatch
 
     private static float GetDetourBudget(float sourceToTargetDistance)
     {
-        if (sourceToTargetDistance <= 0f)
-        {
-            return SourceClusterExtent;
-        }
-
-        return Mathf.Clamp(sourceToTargetDistance * DetourBudgetMultiplier, MinimumDetourBudget, MaximumDetourBudget);
+        return HaulGeometry.GetDetourBudget(
+            sourceToTargetDistance,
+            SourceClusterExtent,
+            DetourBudgetMultiplier,
+            MinimumDetourBudget,
+            MaximumDetourBudget);
     }
 
     private static bool ShouldUsePatchSweep(ResourcePileInstance firstPile, IReadOnlyCollection<ResourcePileInstance> sameTypePiles)
     {
-        if (firstPile.BlueprintId.Contains("sapling", System.StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
         var storedResource = firstPile.GetStoredResource();
         return storedResource != null &&
-               storedResource.Amount <= PatchSweepAmountThreshold &&
-               sameTypePiles.Count >= PatchSweepCountThreshold;
+               HaulGeometry.ShouldUsePatchSweep(
+                   firstPile.BlueprintId,
+                   storedResource.Amount,
+                   sameTypePiles.Count,
+                   PatchSweepAmountThreshold,
+                   PatchSweepCountThreshold);
     }
 
     private static HashSet<ResourcePileInstance> BuildPatchComponent(ResourcePileInstance firstPile, IReadOnlyCollection<ResourcePileInstance> sameTypePiles)
@@ -1611,27 +1590,23 @@ internal static class HaulingDecisionTracePatch
         float detourBudget,
         out float detourCost)
     {
-        if (!targetPosition.HasValue)
-        {
-            detourCost = Vector3.Distance(firstPile.GetPosition(), candidatePile.GetPosition());
-            return detourCost <= SourceClusterExtent;
-        }
-
-        detourCost = GetAdditionalDetour(firstPile, candidatePile, targetPosition);
-        return detourCost <= detourBudget;
+        return HaulGeometry.IsRouteWorthwhile(
+            firstPile.GetPosition(),
+            candidatePile.GetPosition(),
+            targetPosition,
+            detourBudget,
+            SourceClusterExtent,
+            out detourCost);
     }
 
     private static float GetAdditionalDetour(ResourcePileInstance firstPile, ResourcePileInstance candidatePile, Vector3? targetPosition)
     {
-        if (!targetPosition.HasValue)
-        {
-            return Vector3.Distance(firstPile.GetPosition(), candidatePile.GetPosition());
-        }
-
-        var direct = Vector3.Distance(firstPile.GetPosition(), targetPosition.Value);
-        var viaCandidate = Vector3.Distance(firstPile.GetPosition(), candidatePile.GetPosition()) +
-                           Vector3.Distance(candidatePile.GetPosition(), targetPosition.Value);
-        return Mathf.Max(0f, viaCandidate - direct);
+        return targetPosition.HasValue
+            ? HaulGeometry.GetAdditionalDetour(
+                firstPile.GetPosition(),
+                candidatePile.GetPosition(),
+                targetPosition.Value)
+            : Vector3.Distance(firstPile.GetPosition(), candidatePile.GetPosition());
     }
 
     private static bool ValidatePile(HaulingBaseGoal goal, ResourcePileInstance pile)
