@@ -73,6 +73,13 @@ StallWatchdogTimeoutSeconds = 10
 
 This project is not official and is not affiliated with, endorsed by, or supported by the game developers or publisher.
 
+## Disclaimer
+
+- This mod changes Going Medieval runtime behaviour and can cause unexpected behaviour, errors, or mod conflicts.
+- Use it at your own risk.
+- Back up your saves before testing new versions.
+- The software is provided without warranty; see [LICENSE](LICENSE).
+
 ## Author
 
 - [tigyijanos](https://github.com/tigyijanos)
