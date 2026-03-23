@@ -11,6 +11,7 @@ The items below are not relicensed by this repository. They remain under their o
 - Redistribution status: not redistributed by this repository
 - Developer: Foxy Voxel
 - Publisher: Mythwright
+- Developer page: https://foxyvoxel.io/games/going-medieval/
 - Official game page: https://mythwright.com/games/going-medieval
 - Publisher terms: https://mythwright.com/terms-of-use
 
