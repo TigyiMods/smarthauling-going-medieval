@@ -29,4 +29,30 @@ public sealed class SmartHaulingSettingsTests
         // Assert
         Assert.Equal(configuredLevel, result);
     }
+
+    [Fact]
+    public void ResolveStallWatchdogTimeoutSeconds_WhenConfiguredBelowMinimum_ClampsToMinimum()
+    {
+        // Arrange
+        const float configuredTimeoutSeconds = 2f;
+
+        // Act
+        var result = SmartHaulingSettings.ResolveStallWatchdogTimeoutSeconds(configuredTimeoutSeconds);
+
+        // Assert
+        Assert.Equal(4f, result);
+    }
+
+    [Fact]
+    public void ResolveStallWatchdogTimeoutSeconds_WhenConfiguredAboveMinimum_ReturnsConfiguredValue()
+    {
+        // Arrange
+        const float configuredTimeoutSeconds = 9.5f;
+
+        // Act
+        var result = SmartHaulingSettings.ResolveStallWatchdogTimeoutSeconds(configuredTimeoutSeconds);
+
+        // Assert
+        Assert.Equal(configuredTimeoutSeconds, result);
+    }
 }

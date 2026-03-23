@@ -128,6 +128,15 @@ internal static class SmartUnloadExecutor
             JumpToAction(goal, decide);
         };
 
+        done.OnInit = delegate
+        {
+            DiagnosticTrace.Info(
+                "unload.exec",
+                $"Completing SmartUnloadGoal for {goal.AgentOwner}: carry=0",
+                120);
+            goal.EndGoalWith(GoalCondition.Succeeded);
+        };
+
         yield return decide;
         yield return prepareDrop;
         yield return goToDrop;

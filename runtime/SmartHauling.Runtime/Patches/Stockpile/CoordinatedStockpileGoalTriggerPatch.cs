@@ -16,10 +16,16 @@ internal static class CoordinatedStockpileGoalTriggerPatch
         if (!RuntimeActivation.IsActive ||
             __instance == null ||
             __instance.HasDisposed ||
-            __instance.GetCurrentGoal() != null ||
             __instance.IsGoalPreparing ||
             __instance.AgentOwner == null)
         {
+            return;
+        }
+
+        var currentGoal = __instance.GetCurrentGoal();
+        if (currentGoal != null)
+        {
+            GoalStallWatchdog.TryAbortStalledGoal(currentGoal);
             return;
         }
 

@@ -262,6 +262,15 @@ internal static class CoordinatedStockpileExecutor
             JumpToAction(goal, decide);
         };
 
+        done.OnInit = delegate
+        {
+            DiagnosticTrace.Info(
+                "coord.exec",
+                $"Completing hauling goal for {goal.AgentOwner}: carry=0, pickupQueue={goal.GetTargetQueue(TargetIndex.A).Count}",
+                120);
+            goal.EndGoalWith(GoalCondition.Succeeded);
+        };
+
         yield return decide;
         yield return goToPickup;
         yield return pickup;

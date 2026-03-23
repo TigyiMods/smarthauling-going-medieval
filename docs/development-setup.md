@@ -81,9 +81,14 @@ Example:
 [Tracing]
 EnableDiagnosticTrace = true
 DiagnosticTraceLevel = Off
+
+[Behaviour]
+EnableStallWatchdog = true
+StallWatchdogTimeoutSeconds = 10
 ```
 
 `DiagnosticTraceLevel` supports `Off`, `Error`, `Info`, and `Trace`.
+`StallWatchdogTimeoutSeconds` is clamped to a minimum value so the watchdog stays conservative.
 
 ## Repository Notes
 

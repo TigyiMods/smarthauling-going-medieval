@@ -60,9 +60,14 @@ SmartHauling changes hauling from mostly local worker decisions to centrally pla
 [Tracing]
 EnableDiagnosticTrace = true
 DiagnosticTraceLevel = Off
+
+[Behaviour]
+EnableStallWatchdog = true
+StallWatchdogTimeoutSeconds = 10
 ```
 
 - Valid values for `DiagnosticTraceLevel`: `Off`, `Error`, `Info`, `Trace`
+- `StallWatchdogTimeoutSeconds` is clamped to a safe minimum to avoid over-aggressive goal aborts
 
 ## Unofficial
 

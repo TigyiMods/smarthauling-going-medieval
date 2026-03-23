@@ -16,6 +16,8 @@ internal static class GoalLifecycleTracePatch
             return;
         }
 
+        GoalStallWatchdog.Clear(__instance);
+
         if (!IsRelevant(__instance))
         {
             return;
@@ -36,6 +38,7 @@ internal static class GoalLifecycleTracePatch
         MarkFailedStockpileSources(__instance, condition);
         PreserveCarryPriority(__instance, condition);
         GoalSourcePriorityStore.Clear(__instance);
+        GoalStallWatchdog.Clear(__instance);
         StockpileDestinationPlanStore.Clear(__instance);
         CoordinatedStockpileTaskStore.Clear(__instance);
         DestinationLeaseStore.ReleaseGoal(__instance);
@@ -104,6 +107,11 @@ internal static class GoalLifecycleTracePatch
 
         var currentPile = goal.GetTarget(TargetIndex.A).GetObjectAs<ResourcePileInstance>();
         if (currentPile == null)
+        {
+            return;
+        }
+
+        if (HaulFailureBackoffStore.IsCoolingDown(currentPile))
         {
             return;
         }
