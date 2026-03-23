@@ -9,9 +9,10 @@ The items below are not relicensed by this repository. They remain under their o
 - Type: proprietary game dependency
 - Role: local game installation required for build and runtime
 - Redistribution status: not redistributed by this repository
-- Official game page: https://foxyvoxel.io/games/going-medieval/
-- Publisher EULA / terms: https://www.fulqrumpublishing.com/eula
-- Publisher EULA PDF: https://www.fulqrumpublishing.com/files/Fulqrum_Publishing_EULA.pdf
+- Developer: Foxy Voxel
+- Publisher: Mythwright
+- Official game page: https://mythwright.com/games/going-medieval
+- Publisher terms: https://mythwright.com/terms-of-use
 
 ## BepInEx 5
 

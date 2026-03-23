@@ -86,7 +86,7 @@ This project is not official and is not affiliated with, endorsed by, or support
 
 ## Dependencies
 
-- [Going Medieval](https://foxyvoxel.io/games/going-medieval/)
+- [Going Medieval](https://mythwright.com/games/going-medieval)
 - [BepInEx 5](https://docs.bepinex.dev/)
 - [Windows](https://www.microsoft.com/en-us/windows/)
 
