@@ -1,7 +1,8 @@
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
-using System.Linq;
+using SmartHauling.Runtime.Composition;
+using SmartHauling.Runtime.Configuration;
 using UnityEngine;
 
 namespace SmartHauling.Runtime;
@@ -17,9 +18,13 @@ public sealed class SmartHaulingPlugin : BaseUnityPlugin
     private void Awake()
     {
         Logger = base.Logger;
+        SmartHaulingSettings.Initialize(Config);
+        RuntimeServices.InitializeDefaults();
+        DiagnosticTrace.Configure(SmartHaulingSettings.DiagnosticTraceLevel);
         DiagnosticTrace.StartSession();
         harmony = new Harmony(PluginInfo.Guid);
         Logger.LogInfo($"{PluginInfo.Name} initializing on Unity {Application.unityVersion}.");
+        Logger.LogInfo($"Diagnostic trace level: {DiagnosticTrace.CurrentLevel}");
         DiagnosticTrace.Raw("bootstrap", $"Awake entered. Trace file: {DiagnosticTrace.TraceFilePath}");
 
         try
@@ -31,14 +36,13 @@ public sealed class SmartHaulingPlugin : BaseUnityPlugin
             DiagnosticTrace.Raw("bootstrap", $"PatchAll completed. Patched methods: {patchedMethods.Count}");
             foreach (var method in patchedMethods.Take(40))
             {
-                Logger.LogInfo($"Patched -> {method.DeclaringType?.FullName}.{method.Name}");
                 DiagnosticTrace.Raw("patched", $"{method.DeclaringType?.FullName}.{method.Name}");
             }
         }
         catch (System.Exception ex)
         {
             Logger.LogError($"Failed to apply Harmony patches: {ex}");
-            DiagnosticTrace.Raw("bootstrap.error", ex.ToString());
+            DiagnosticTrace.Error("bootstrap.error", ex.ToString());
             throw;
         }
     }

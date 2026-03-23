@@ -1,74 +1,95 @@
-﻿# SmartHauling
+﻿# SmartHauling: Going Medieval Mod
 
-SmartHauling is a coordinated hauling mod for Going Medieval built as a BepInEx runtime plugin.
+```text
+Settler without SmartHauling
 
-The project focuses on:
+   (o_o)
+   <)   )/
+    /   \
 
-- centralized stockpile task planning
-- coordinated worker assignment
-- mixed pickup and multi-drop hauling
-- locality-aware refills
-- safer, more testable planner code
+carries one thing
 
-## Status
+...walks back...
 
-The repository contains the active runtime plugin and a growing unit test suite for the pure planning and scoring layers.
+Settler with SmartHauling
 
-This repository does not include:
+   (o_o)
+  <)   )>
+   /   \
 
-- game binaries
-- copied proprietary game code
-- decompiled game sources
+carries mixed loads
 
-## Repository Layout
-
-- `runtime/SmartHauling.Runtime/`: plugin source
-- `runtime/SmartHauling.Runtime.Tests/`: unit tests for planner and helper logic
-- `docs/`: project notes and build/runtime guidance
-
-## Requirements
-
-- Windows
-- .NET SDK
-- A local Going Medieval installation
-- BepInEx 5 for the game runtime
-
-## Build
-
-```powershell
-dotnet build .\runtime\SmartHauling.Runtime\SmartHauling.Runtime.csproj -c Release
+...fills the bag...
 ```
 
-If your game is not installed in the default Steam path, pass `GameDir` explicitly:
+SmartHauling is an unofficial hauling mod for Going Medieval.
 
-```powershell
-dotnet build .\runtime\SmartHauling.Runtime\SmartHauling.Runtime.csproj -c Release -p:GameDir="D:\SteamLibrary\steamapps\common\Going Medieval"
-```
+## What It Does
 
-## Test
+SmartHauling changes hauling from mostly local worker decisions to centrally planned stockpile work, with mixed-resource pickup and carry-capacity maximization.
 
-```powershell
-dotnet test .\runtime\SmartHauling.Runtime.Tests\SmartHauling.Runtime.Tests.csproj -c Release
-```
+- one central board leases hauling tasks
+- settlers do not compete for the same hauling source at the same time
+- settlers can carry more than one resource type in the same haul
+- pickup tries to fill remaining carry capacity
+- drop tries to empty the carry before new pickup work starts
 
 ## Install
 
 1. Install BepInEx 5 into the game directory.
-2. Build the plugin.
-3. Copy the generated `SmartHauling.Runtime.dll` into:
+2. Build `SmartHauling.Runtime.dll` from this repository, or use a packaged build if you have one.
+3. Copy the DLL into:
 
 ```text
 <Going Medieval>\BepInEx\plugins\SmartHauling.Runtime\
 ```
 
-## Development Notes
+4. Restart the game.
 
-- The runtime plugin references the local game installation during build.
-- Planner and scoring changes should be validated with both tests and in-game traces.
-- Public-facing changes should follow the repository rules in `AGENTS.md`.
+## Configuration
 
-## Legal and Publishing Notes
+- The mod writes its settings to:
 
-- Keep the repository source-only.
-- Do not add decompiled game code or copied game assets.
-- Prefer original design notes and clean-room documentation over implementation dumps from the game.
+```text
+<Going Medieval>\BepInEx\config\hu.tigyi.goingmedieval.smarthauling.runtime.cfg
+```
+
+- To control diagnostic logging, set:
+
+```ini
+[Tracing]
+EnableDiagnosticTrace = true
+DiagnosticTraceLevel = Off
+```
+
+- Valid values for `DiagnosticTraceLevel`: `Off`, `Error`, `Info`, `Trace`
+
+## Unofficial
+
+This project is not official and is not affiliated with, endorsed by, or supported by the game developers or publisher.
+
+## Author
+
+- [tigyijanos](https://github.com/tigyijanos)
+
+## Dependencies
+
+- [Going Medieval](https://foxyvoxel.io/games/going-medieval/)
+- [BepInEx 5](https://docs.bepinex.dev/)
+- [Windows](https://www.microsoft.com/en-us/windows/)
+
+## Legal
+
+- This repository's own code is licensed under [MIT](LICENSE).
+- Third-party dependencies and platform terms are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- This repository is source-only.
+- It does not include game binaries, copied game assets, or decompiled game source.
+- You need your own licensed local game installation to build the project.
+
+## Documentation
+
+- Developer guide: [docs/developer-guide.md](docs/developer-guide.md)
+- Development setup: [docs/development-setup.md](docs/development-setup.md)
+- Runtime flow: [docs/architecture-flow.md](docs/architecture-flow.md)
+- Hauling mental map: [docs/hauling-mental-map.md](docs/hauling-mental-map.md)
+- Feasibility notes: [docs/smart-hauling-feasibility.md](docs/smart-hauling-feasibility.md)

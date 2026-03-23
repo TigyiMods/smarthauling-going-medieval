@@ -1,5 +1,3 @@
-﻿using SmartHauling.Runtime;
-
 namespace SmartHauling.Runtime.Tests;
 
 public sealed class ReferenceEqualityComparerTests

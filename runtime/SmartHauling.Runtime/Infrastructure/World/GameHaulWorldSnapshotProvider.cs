@@ -1,0 +1,124 @@
+using System.Collections;
+using System.Reflection;
+using HarmonyLib;
+using NSEipix.Base;
+using NSMedieval.Manager;
+using NSMedieval.State;
+
+namespace SmartHauling.Runtime.Infrastructure.World;
+
+internal sealed class GameHaulWorldSnapshotProvider : IHaulWorldSnapshotProvider
+{
+    private static readonly PropertyInfo? CreaturesProperty =
+        AccessTools.Property(typeof(CreatureManager), "Creatures");
+
+    private static readonly FieldInfo? CreaturesField =
+        AccessTools.Field(typeof(CreatureManager), "creatures");
+
+    private static readonly PropertyInfo AllPileInstancesProperty =
+        AccessTools.Property(typeof(ResourcePileManager), "AllPileInstances")!;
+
+    private static readonly PropertyInfo CanBeStoredProperty =
+        AccessTools.Property(typeof(ResourcePileHaulingManager), "CanBeStored")!;
+
+    private static readonly PropertyInfo PilesToReStoreProperty =
+        AccessTools.Property(typeof(ResourcePileHaulingManager), "PilesToReStore")!;
+
+    public IReadOnlyList<ResourcePileInstance> GetCentralHaulSourcePiles()
+    {
+        var haulingManager = MonoSingleton<ResourcePileHaulingManager>.Instance;
+        var haulableSet = new HashSet<ResourcePileInstance>(ReferenceEqualityComparer<ResourcePileInstance>.Instance);
+
+        if (haulingManager != null)
+        {
+            AddPileSequence(haulableSet, CanBeStoredProperty.GetValue(haulingManager) as IEnumerable);
+            AddPileSequence(haulableSet, PilesToReStoreProperty.GetValue(haulingManager) as IEnumerable);
+        }
+
+        if (haulableSet.Count > 0)
+        {
+            return CentralHaulSourceFilter.FilterWithSingleStorageSnapshot(
+                haulableSet,
+                StorageCandidatePlanner.GetAllStoragesSnapshot,
+                HaulSourcePolicy.CanUseAsCentralHaulSource);
+        }
+
+        return CentralHaulSourceFilter.FilterWithSingleStorageSnapshot(
+            GetAllKnownPileInstances(),
+            StorageCandidatePlanner.GetAllStoragesSnapshot,
+            HaulSourcePolicy.CanUseAsCentralHaulSource);
+    }
+
+    public IReadOnlyList<ResourcePileInstance> GetAllKnownPileInstances()
+    {
+        var pileManager = MonoSingleton<ResourcePileManager>.Instance;
+        if (pileManager == null)
+        {
+            return new List<ResourcePileInstance>();
+        }
+
+        var allPileInstances = AllPileInstancesProperty.GetValue(pileManager) as IEnumerable;
+        if (allPileInstances == null)
+        {
+            return new List<ResourcePileInstance>();
+        }
+
+        return allPileInstances
+            .OfType<ResourcePileInstance>()
+            .Where(pile => pile != null && !pile.HasDisposed)
+            .ToList();
+    }
+
+    public IEnumerable<CreatureBase> GetCreatures()
+    {
+        var manager = MonoSingleton<CreatureManager>.Instance;
+        if (manager == null)
+        {
+            yield break;
+        }
+
+        foreach (var creature in GetCreatureEnumerable(manager).OfType<CreatureBase>())
+        {
+            if (creature != null && !creature.HasDisposed)
+            {
+                yield return creature;
+            }
+        }
+    }
+    private static void AddPileSequence(HashSet<ResourcePileInstance> target, IEnumerable? source)
+    {
+        if (source == null)
+        {
+            return;
+        }
+
+        foreach (var pile in source.OfType<ResourcePileInstance>())
+        {
+            if (pile != null && !pile.HasDisposed)
+            {
+                target.Add(pile);
+            }
+        }
+    }
+
+    private static IEnumerable<object> GetCreatureEnumerable(CreatureManager manager)
+    {
+        if (CreaturesProperty?.GetValue(manager) is IEnumerable creaturesByProperty)
+        {
+            foreach (var creature in creaturesByProperty)
+            {
+                yield return creature;
+            }
+
+            yield break;
+        }
+
+        if (CreaturesField?.GetValue(manager) is IEnumerable creaturesByField)
+        {
+            foreach (var creature in creaturesByField)
+            {
+                yield return creature;
+            }
+        }
+    }
+}

@@ -1,4 +1,3 @@
-﻿using SmartHauling.Runtime;
 using UnityEngine;
 
 namespace SmartHauling.Runtime.Tests;

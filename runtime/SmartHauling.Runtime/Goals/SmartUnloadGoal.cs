@@ -1,9 +1,6 @@
-using System.Collections.Generic;
 using NSMedieval.Goap;
 using NSMedieval.Goap.Actions;
 using NSMedieval.Pathfinding;
-using NSMedieval.State;
-using NSMedieval.Village.Map.Pathfinding;
 
 namespace SmartHauling.Runtime.Goals;
 
