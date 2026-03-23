@@ -1,16 +1,11 @@
 using HarmonyLib;
-using NSEipix.Base;
-using NSMedieval;
-using NSMedieval.BuildingComponents;
 using NSMedieval.Components;
 using NSMedieval.Goap;
 using NSMedieval.Goap.Actions;
 using NSMedieval.Goap.Goals;
-using NSMedieval.Manager;
 using NSMedieval.Model;
 using NSMedieval.Pathfinding;
 using NSMedieval.State;
-using NSMedieval.Stockpiles;
 using SmartHauling.Runtime.Composition;
 
 namespace SmartHauling.Runtime;
@@ -194,7 +189,9 @@ internal static class CoordinatedStockpileExecutor
 
         prepareDrop.OnInit = delegate
         {
-            if (!TryPrepareNextDrop(goal))
+            if (goal.AgentOwner is not CreatureBase creature ||
+                goal.AgentOwner is not IStorageAgent { Storage: not null } storageAgent ||
+                !UnloadExecutionPlanner.TryPrepareNextDrop(goal, creature, storageAgent.Storage, preferPlannedStorages: true))
             {
                 DiagnosticTrace.Info(
                     "coord.exec",
@@ -241,7 +238,9 @@ internal static class CoordinatedStockpileExecutor
 
         storeDrop.OnInit = delegate
         {
-            if (!TryStoreActiveDrop(goal))
+            if (goal.AgentOwner is not CreatureBase creature ||
+                goal.AgentOwner is not IStorageAgent { Storage: not null } storageAgent ||
+                !UnloadExecutionPlanner.TryStoreActiveDrop(goal, creature, storageAgent.Storage))
             {
                 var failures = CoordinatedStockpileExecutionStore.IncrementDropFailures(goal);
                 DiagnosticTrace.Info(
@@ -341,222 +340,6 @@ internal static class CoordinatedStockpileExecutor
             resource.Blueprint,
             0f,
             storage.HasOneOrMoreResources()) > 0;
-    }
-
-    private static bool TryPrepareNextDrop(StockpileHaulingGoal goal)
-    {
-        if (goal.AgentOwner is not CreatureBase creature ||
-            goal.AgentOwner is not IStorageAgent { Storage: not null } storageAgent)
-        {
-            return false;
-        }
-
-        CoordinatedStockpileExecutionStore.ClearActiveDrop(goal, creature);
-
-        var carriedResources = BuildOrderedCarriedResources(goal, storageAgent.Storage);
-        if (carriedResources.Count == 0)
-        {
-            return false;
-        }
-
-        var sourcePriority = ZonePriority.None;
-        if (CoordinatedStockpileTaskStore.TryGet(goal, out var task))
-        {
-            sourcePriority = task.SourcePriority;
-        }
-        else
-        {
-            HaulingPriorityRules.TryGetGoalSourcePriority(goal, creature, out sourcePriority);
-        }
-
-        foreach (var carriedResource in carriedResources)
-        {
-            if (!CoordinatedDropPlanLookup.TryGetPlannedStorages(goal, carriedResource.BlueprintId, out var orderedStorages))
-            {
-                continue;
-            }
-
-            foreach (var storage in orderedStorages)
-            {
-                if (storage == null || storage.HasDisposed)
-                {
-                    continue;
-                }
-
-                if (!storage.ReserveStorage(carriedResource, creature, out var storedAmount, out var position) ||
-                    storedAmount.Amount <= 0)
-                {
-                    continue;
-                }
-
-                if (CoordinatedStockpileExecutionStore.HasFailedDrop(goal, carriedResource.BlueprintId, storage, position))
-                {
-                    storage.ReleaseReservations(creature);
-                    continue;
-                }
-
-                ForceTarget(goal, TargetIndex.B, new TargetObject(storage, position));
-                CoordinatedStockpileExecutionStore.SetActiveDrop(
-                    goal,
-                    new CoordinatedDropReservation(
-                        carriedResource.BlueprintId,
-                        carriedResource.Blueprint,
-                        storedAmount.Amount,
-                        storage,
-                        position));
-
-                DiagnosticTrace.Info(
-                    "coord.exec",
-                    $"Prepared drop for {goal.AgentOwner}: resource={carriedResource.BlueprintId}, amount={storedAmount.Amount}, storage={storage.GetType().Name}[prio={storage.Priority}]@{position}, source=task",
-                    120);
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool TryStoreActiveDrop(StockpileHaulingGoal goal)
-    {
-        if (goal.AgentOwner is not CreatureBase creature ||
-            goal.AgentOwner is not IStorageAgent { Storage: not null } storageAgent ||
-            !CoordinatedStockpileExecutionStore.TryGet(goal, out var state) ||
-            state.ActiveDrop == null)
-        {
-            return false;
-        }
-
-        var activeDrop = state.ActiveDrop;
-        var storage = storageAgent.Storage;
-        var carriedResource = CarrySummaryUtil.Snapshot(storage)
-            .FirstOrDefault(resource => resource.BlueprintId == activeDrop.ResourceId);
-        if (carriedResource == null || carriedResource.HasDisposed || carriedResource.Amount <= 0)
-        {
-            CoordinatedStockpileExecutionStore.ClearActiveDrop(goal, creature);
-            SyncPickedCount(goal, storage);
-            return true;
-        }
-
-        var carryBefore = storage.GetTotalStoredCount();
-        var carriedBeforeSummary = CarrySummaryUtil.Summarize(storage);
-        var amountToStore = System.Math.Min(carriedResource.Amount, System.Math.Max(1, activeDrop.ReservedAmount));
-        var target = goal.GetTarget(TargetIndex.B);
-        var success = false;
-        var storedAmount = 0;
-
-        if (target.ObjectInstance is StockpileInstance stockpileInstance)
-        {
-            var existingPile = stockpileInstance.GetResourcePileGridPosition(activeDrop.Position);
-            if (existingPile != null && existingPile.Blueprint == activeDrop.Blueprint)
-            {
-                storedAmount = storage.TransferTo(existingPile.GetStorage(), activeDrop.Blueprint, amountToStore);
-                success = storedAmount > 0;
-            }
-            else
-            {
-                var stackingLimit = activeDrop.Blueprint?.StackingLimit ?? 0;
-                if (stackingLimit <= 0)
-                {
-                    return false;
-                }
-
-                var spawnAmount = System.Math.Min(amountToStore, stackingLimit);
-                var pileView = MonoSingleton<ResourcePileManager>.Instance.SpawnPile(
-                    carriedResource.Clone(spawnAmount),
-                    GridUtils.GetWorldPosition(activeDrop.Position));
-                if (pileView != null)
-                {
-                    MonoSingleton<ResourcePileTracker>.Instance.OnNewPileSpawnedOnStockpile(activeDrop.Blueprint, pileView.ResourcePileInstance);
-                    storage.Consume(activeDrop.Blueprint, spawnAmount);
-                    storedAmount = spawnAmount;
-                    success = true;
-                }
-            }
-        }
-        else if (target.ObjectInstance is ShelfComponentInstance shelfComponentInstance)
-        {
-            var remaining = amountToStore;
-            foreach (var shelfStorage in shelfComponentInstance.AllStorage)
-            {
-                var justStored = shelfStorage.StoreResourcePile(creature, activeDrop.Blueprint, remaining);
-                remaining -= justStored;
-                storedAmount += justStored;
-                if (remaining <= 0)
-                {
-                    break;
-                }
-            }
-
-            success = storedAmount > 0;
-        }
-
-        CoordinatedStockpileExecutionStore.ClearActiveDrop(goal, creature);
-
-        if (!success)
-        {
-            CoordinatedStockpileExecutionStore.MarkFailedDrop(goal, activeDrop);
-            DiagnosticTrace.Info(
-                "coord.exec",
-                $"Marked failed drop target for {goal.AgentOwner}: resource={activeDrop.ResourceId}, storage={target.ObjectInstance?.GetType().Name ?? "<none>"}@{activeDrop.Position}",
-                120);
-            return false;
-        }
-
-        SyncPickedCount(goal, storage);
-        CoordinatedStockpileExecutionStore.ResetDropFailures(goal);
-        DiagnosticTrace.Info(
-            "coord.exec",
-            $"Stored {activeDrop.ResourceId}:{storedAmount} for {goal.AgentOwner}, carryBefore={carryBefore}, carryAfter={storage.GetTotalStoredCount()}, carriedBefore=[{carriedBeforeSummary}], carriedAfter=[{CarrySummaryUtil.Summarize(storage)}]",
-            120);
-        return true;
-    }
-
-    private static List<ResourceInstance> BuildOrderedCarriedResources(Goal goal, Storage storage)
-    {
-        var carried = CarrySummaryUtil.Snapshot(storage);
-        if (carried.Count <= 1)
-        {
-            return carried;
-        }
-
-        if (CoordinatedStockpileTaskStore.TryGet(goal, out var task))
-        {
-            var priorityByResourceId = new Dictionary<string, int>();
-            for (var i = 0; i < task.DropOrder.Count; i++)
-            {
-                priorityByResourceId[task.DropOrder[i]] = i;
-            }
-
-            return carried
-                .OrderBy(resource => priorityByResourceId.TryGetValue(resource.BlueprintId, out var rank) ? rank : int.MaxValue)
-                .ThenByDescending(resource => resource.Amount)
-                .ToList();
-        }
-
-        if (!StockpileDestinationPlanStore.TryGet(goal, out var destinationPlan))
-        {
-            return carried
-                .OrderByDescending(resource => resource.Amount)
-                .ToList();
-        }
-
-        var legacyPriorityByResourceId = new Dictionary<string, int>
-        {
-            [destinationPlan.PrimaryResourceId] = 0
-        };
-        var nextPriority = 1;
-        foreach (var resourcePlan in destinationPlan.ResourcePlans)
-        {
-            if (!legacyPriorityByResourceId.ContainsKey(resourcePlan.ResourceId))
-            {
-                legacyPriorityByResourceId[resourcePlan.ResourceId] = nextPriority++;
-            }
-        }
-
-        return carried
-            .OrderBy(resource => legacyPriorityByResourceId.TryGetValue(resource.BlueprintId, out var rank) ? rank : int.MaxValue)
-            .ThenByDescending(resource => resource.Amount)
-            .ToList();
     }
 
     private static void ForceTarget(Goal goal, TargetIndex index, TargetObject target)

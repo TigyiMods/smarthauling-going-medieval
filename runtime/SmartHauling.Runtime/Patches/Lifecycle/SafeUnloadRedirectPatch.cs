@@ -4,7 +4,6 @@ using NSMedieval.Components;
 using NSMedieval.Controllers;
 using NSMedieval.Goap;
 using NSMedieval.State;
-using NSMedieval.Village.Map.Pathfinding;
 using SmartHauling.Runtime.Goals;
 
 namespace SmartHauling.Runtime.Patches;
@@ -233,24 +232,12 @@ internal static class SafeUnloadRedirectPatch
 
     private static bool CanAttemptSmartUnload(WorkerGoapAgent agent, Goal goal, CreatureBase creature, Storage storage)
     {
-        if (agent.AgentOwner is not IPathfindingAgent pathfindingAgent)
+        if (agent.AgentOwner is not IPathfindingAgent)
         {
             return false;
         }
 
-        var firstResource = storage.GetSingleResource();
-        if (firstResource == null)
-        {
-            return false;
-        }
-
-        var minimumPriority = ZonePriority.None;
-        if (HaulingPriorityRules.TryGetGoalSourcePriority(goal, creature, out var sourcePriority))
-        {
-            minimumPriority = HaulingPriorityRules.GetRequiredMinimumPriority(sourcePriority, minimumPriority);
-        }
-
-        return PathfinderUtil.FindNearestStorage(pathfindingAgent, firstResource, minimumPriority, false) != null;
+        return UnloadExecutionPlanner.HasAnyUnloadDestination(goal, creature, storage, preferPlannedStorages: false);
     }
 
     private sealed class GoalEndContext

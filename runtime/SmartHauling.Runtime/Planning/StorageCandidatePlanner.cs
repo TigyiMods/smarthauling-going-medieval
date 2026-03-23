@@ -333,7 +333,7 @@ internal static class StorageCandidatePlanner
         }
     }
 
-    private static Vector3? TryGetPosition(object? instance)
+    internal static Vector3? TryGetPosition(object? instance)
     {
         if (instance == null)
         {
