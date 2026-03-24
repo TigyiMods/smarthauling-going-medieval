@@ -7,7 +7,6 @@ namespace SmartHauling.Runtime.Patches;
 [HarmonyLib.HarmonyPatch(typeof(WorkerGoapAgent), nameof(WorkerGoapAgent.Tick))]
 internal static class CoordinatedStockpileGoalTriggerPatch
 {
-    private const int HighestPriorityValue = 1;
     private const string StockpileGoalId = "StockpileHaulingGoal";
 
     [HarmonyLib.HarmonyPrefix]
@@ -40,8 +39,18 @@ internal static class CoordinatedStockpileGoalTriggerPatch
             return;
         }
 
-        if (__instance.GetJobPriority(JobType.Hauling) != HighestPriorityValue)
+        if (!HaulingGoalPriorityGate.TryAllowForcedHauling(
+                __instance.GetJobPriority,
+                out var blockingJob,
+                out var blockingPriority))
         {
+            if (blockingJob.HasValue)
+            {
+                DiagnosticTrace.Raw(
+                    "haul.priority",
+                    $"Skipped forced {StockpileGoalId} for {__instance.AgentOwner}: blockingJob={blockingJob.Value}, blockingPriority={blockingPriority:0.##}, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}");
+            }
+
             return;
         }
 
