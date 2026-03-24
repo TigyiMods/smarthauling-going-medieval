@@ -100,6 +100,7 @@ This project is not official and is not affiliated with, endorsed by, or support
 
 ## Documentation
 
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
 - Developer guide: [docs/developer-guide.md](docs/developer-guide.md)
 - Development setup: [docs/development-setup.md](docs/development-setup.md)
 - Runtime flow: [docs/architecture-flow.md](docs/architecture-flow.md)
