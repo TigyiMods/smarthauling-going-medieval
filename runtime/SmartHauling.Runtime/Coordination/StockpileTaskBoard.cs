@@ -18,6 +18,7 @@ internal static class StockpileTaskBoard
     private const float TaskLeaseSeconds = 18f;
     private const float TaskFailureCooldownSeconds = 10f;
     private const float TaskSnapshotLifetimeSeconds = 1f;
+    private const float AvailabilityProbeCacheLifetimeSeconds = 0.25f;
     private const float FallbackNominalWorkerFreeSpace = 120f;
 
     private static readonly object SyncRoot = new();
@@ -28,7 +29,11 @@ internal static class StockpileTaskBoard
         new(ReferenceEqualityComparer<ResourcePileInstance>.Instance);
     private static readonly Dictionary<CreatureBase, StockpileTaskSeed> PendingAssignments =
         new(ReferenceEqualityComparer<CreatureBase>.Instance);
+    private static readonly Dictionary<CreatureBase, TimedAvailabilityProbeCache.Entry> CachedAvailabilityByWorker =
+        new(ReferenceEqualityComparer<CreatureBase>.Instance);
     private static float SnapshotExpiresAt;
+    private static int assignmentStateVersion;
+    private static bool assignmentsDirty = true;
 
     /// <summary>
     /// Attempts to lease the best currently assignable stockpile task for the given creature and goal.
@@ -48,13 +53,14 @@ internal static class StockpileTaskBoard
         {
             Cleanup();
             EnsureSnapshot();
-            RebuildAssignments();
+            EnsureAssignments();
 
             var best = SelectBestMaterializedPlan(stockpileGoal, creature);
             if (best == null)
             {
                 PendingAssignments.Remove(creature);
-                RebuildAssignments();
+                MarkAssignmentsDirty();
+                EnsureAssignments();
                 best = SelectBestMaterializedPlan(stockpileGoal, creature);
                 if (best == null)
                 {
@@ -69,6 +75,7 @@ internal static class StockpileTaskBoard
                 best.FirstPile,
                 leasedSeed?.SourcePatchPiles ?? new[] { best.FirstPile },
                 RuntimeServices.Clock.RealtimeSinceStartup + TaskLeaseSeconds));
+            MarkAssignmentsDirty();
             DiagnosticTrace.Info(
                 "haul.plan",
                 $"Board assigned task {best.FirstPile.BlueprintId} to {creature}: taskScore={best.Score:0.0}, claimScore={HaulingDecisionTracePatch.GetBoardClaimScore(creature, best):0.0}",
@@ -99,14 +106,27 @@ internal static class StockpileTaskBoard
 
         lock (SyncRoot)
         {
+            var now = RuntimeServices.Clock.RealtimeSinceStartup;
             Cleanup();
             EnsureSnapshot();
-            RebuildAssignments();
+            EnsureAssignments();
+
+            if (CachedAvailabilityByWorker.TryGetValue(creature, out var cachedAvailability) &&
+                TimedAvailabilityProbeCache.TryGet(cachedAvailability, assignmentStateVersion, now, out var cachedValue))
+            {
+                return cachedValue;
+            }
 
             var probeGoal = new StockpileHaulingGoal(workerAgent);
             try
             {
-                return SelectBestMaterializedPlan(probeGoal, creature) != null;
+                var hasAssignableTask = SelectBestMaterializedPlan(probeGoal, creature) != null;
+                CachedAvailabilityByWorker[creature] = TimedAvailabilityProbeCache.Create(
+                    assignmentStateVersion,
+                    now,
+                    AvailabilityProbeCacheLifetimeSeconds,
+                    hasAssignableTask);
+                return hasAssignableTask;
             }
             finally
             {
@@ -234,6 +254,10 @@ internal static class StockpileTaskBoard
             {
                 PendingTasks.Remove(pile);
             }
+            if (releasedPiles.Count > 0 || releasedOwners.Count > 0)
+            {
+                MarkAssignmentsDirty();
+            }
             Cleanup();
         }
     }
@@ -259,6 +283,7 @@ internal static class StockpileTaskBoard
                 PendingAssignments.Remove(owner);
             }
             FailedUntil[pile] = RuntimeServices.Clock.RealtimeSinceStartup + TaskFailureCooldownSeconds;
+            MarkAssignmentsDirty();
         }
     }
 
@@ -305,14 +330,20 @@ internal static class StockpileTaskBoard
         }
 
         SnapshotExpiresAt = now + TaskSnapshotLifetimeSeconds;
+        MarkAssignmentsDirty();
         DiagnosticTrace.Info(
             "haul.plan",
             $"Board snapshot refreshed: tasks={PendingTasks.Count}, top=[{HaulingDecisionTracePatch.DescribeTaskSeeds(PendingTasks.Values)}]",
             40);
     }
 
-    private static void RebuildAssignments()
+    private static void EnsureAssignments()
     {
+        if (!assignmentsDirty)
+        {
+            return;
+        }
+
         PendingAssignments.Clear();
         foreach (var assignment in StockpileTaskAssignmentPlanner.BuildAssignments(
                      PendingTasks.Values,
@@ -320,6 +351,7 @@ internal static class StockpileTaskBoard
         {
             PendingAssignments[assignment.Key] = assignment.Value;
         }
+        assignmentsDirty = false;
 
         DiagnosticTrace.Info(
             "haul.plan",
@@ -330,13 +362,19 @@ internal static class StockpileTaskBoard
     private static void Cleanup()
     {
         var now = RuntimeServices.Clock.RealtimeSinceStartup;
+        var hadChanges = false;
         ActiveLeases.RemoveAll(lease =>
+        {
+            var shouldRemove =
             lease.Goal == null ||
             lease.Owner == null ||
             lease.Owner.HasDisposed ||
             lease.FirstPile == null ||
             lease.FirstPile.HasDisposed ||
-            lease.ExpiresAt <= now);
+            lease.ExpiresAt <= now;
+            hadChanges |= shouldRemove;
+            return shouldRemove;
+        });
 
         var leasedPiles = new HashSet<ResourcePileInstance>(
             ActiveLeases.SelectMany(lease => lease.SourcePatchPiles),
@@ -352,6 +390,7 @@ internal static class StockpileTaskBoard
         foreach (var pile in expiredTasks)
         {
             PendingTasks.Remove(pile);
+            hadChanges = true;
         }
 
         var expiredAssignments = PendingAssignments
@@ -367,9 +406,15 @@ internal static class StockpileTaskBoard
         foreach (var owner in expiredAssignments)
         {
             PendingAssignments.Remove(owner);
+            CachedAvailabilityByWorker.Remove(owner);
+            hadChanges = true;
         }
 
         CleanupFailed();
+        if (hadChanges)
+        {
+            MarkAssignmentsDirty();
+        }
     }
 
     private static void CleanupFailed()
@@ -384,6 +429,18 @@ internal static class StockpileTaskBoard
         {
             FailedUntil.Remove(pile);
         }
+
+        if (expired.Count > 0)
+        {
+            MarkAssignmentsDirty();
+        }
+    }
+
+    private static void MarkAssignmentsDirty()
+    {
+        assignmentsDirty = true;
+        assignmentStateVersion++;
+        CachedAvailabilityByWorker.Clear();
     }
 
 }

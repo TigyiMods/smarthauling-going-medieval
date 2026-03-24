@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 This file follows a lightweight Keep a Changelog style.
 
+## [2.2.0] - 2026-03-24
+
+### Changed
+
+- Forced hauling availability probes now use a short-lived worker cache instead of rematerializing the same board decision every idle tick.
+- Stockpile board assignment rebuilds now run only when board state changes instead of on every probe call.
+
+### Fixed
+
+- Reduced idle hauling overhead for colonies with many workers competing for stockpile tasks.
+
 ## [2.1] - 2026-03-24
 
 ### Changed
