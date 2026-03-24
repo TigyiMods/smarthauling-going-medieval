@@ -22,6 +22,7 @@ public sealed class SmartHaulingPlugin : BaseUnityPlugin
         RuntimeServices.InitializeDefaults();
         DiagnosticTrace.Configure(SmartHaulingSettings.DiagnosticTraceLevel);
         DiagnosticTrace.StartSession();
+        SmartHaulingLocalization.EnsureRegistered();
         harmony = new Harmony(PluginInfo.Guid);
         Logger.LogInfo($"{PluginInfo.Name} initializing on Unity {Application.unityVersion}.");
         Logger.LogInfo($"Diagnostic trace level: {DiagnosticTrace.CurrentLevel}");
