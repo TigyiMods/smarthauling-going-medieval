@@ -40,6 +40,13 @@ If AI agents or tools materially contributed to a change:
 - Prefer stable, source-controlled build and test steps over machine-specific helper scripts.
 - Keep local paths, local logs, and machine-specific configuration out of the repository.
 
+## Versioning Convention
+
+- Use the same `MAJOR.MINOR.PATCH` version format as the other TigyiMods repositories.
+- Do not introduce shortened release versions such as `2.1`; use `2.1.0` instead.
+- Keep `PluginInfo.Version`, changelog headings, Git tags, GitHub release titles, and release asset names aligned to the same version string.
+- Prefer normal patch/minor bumps to normalize formatting going forward; do not rewrite already-published versions only to change formatting.
+
 ## Validation Expectations
 
 - Run `dotnet build` before committing code changes.
