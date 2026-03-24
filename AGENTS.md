@@ -56,6 +56,44 @@ If AI agents or tools materially contributed to a change:
   - `README.txt`
 - `README.txt` in the release asset should be a short install-focused text, not the full repository README.
 - Keep the release asset structure stable across versions unless there is a deliberate packaging change.
+- Recommended `README.txt` shape:
+
+```text
+Smart Hauling vX.Y.Z
+
+Install:
+1. Install BepInEx 5 for Going Medieval.
+2. Extract this archive into your Going Medieval game folder.
+3. Verify that SmartHauling.Runtime.dll ends up at:
+   BepInEx\\plugins\\SmartHauling.Runtime\\SmartHauling.Runtime.dll
+4. Restart the game.
+
+Optional config after first launch:
+BepInEx\\config\\hu.tigyi.goingmedieval.smarthauling.runtime.cfg
+```
+
+- Recommended GitHub release note shape:
+
+```md
+# Smart Hauling vX.Y.Z
+
+One-line release summary.
+
+## Highlights
+
+- First user-visible change
+- Second user-visible change
+- Third user-visible change
+
+## Installation
+
+1. Install BepInEx 5 for Going Medieval.
+2. Extract `SmartHauling-vX.Y.Z.zip` into your Going Medieval game folder.
+3. Restart the game.
+
+Optional config after first launch:
+`BepInEx\\config\\hu.tigyi.goingmedieval.smarthauling.runtime.cfg`
+```
 
 ## Validation Expectations
 
