@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 This file follows a lightweight Keep a Changelog style.
 
+## [2.3.0] - 2026-03-28
+
+### Added
+
+- Provenance-aware stockpile haul routing for `PlayerForced`, `LocalCleanup`, and `AutonomousHaul` contexts.
+- Short-lived worker intent tracking for board-triggered and player-forced hauling decisions.
+- Recent-goal origin tracking and targeted tests for haul origin classification.
+
+### Changed
+
+- Refactored stockpile planning helpers out of the main hauling patch into dedicated policy, state, topology, sweep, mixed-source, and diagnostics components.
+- Board-owned smart executor takeover is now gated more narrowly to explicitly coordinated stockpile tasks.
+- Player-forced hauling documentation now reflects anchor-first pickup with local carry-filling extension behavior.
+- Smart hauling status text handling now normalizes leaked placeholder keys through localized fallback labels.
+
 ## [2.2.0] - 2026-03-24
 
 ### Changed
