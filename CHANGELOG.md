@@ -22,6 +22,7 @@ This file follows a lightweight Keep a Changelog style.
 ### Fixed
 
 - Production delivery now falls back to vanilla behavior unless a mixed collect plan is active, which prevents dismantling and other single-resource jobs from looping on pickup and drop.
+- Player-forced hauling now keeps recently prioritized nearby pickups ahead of non-priority fillers when extending a smart local haul.
 
 ## [2.2.0] - 2026-03-24
 

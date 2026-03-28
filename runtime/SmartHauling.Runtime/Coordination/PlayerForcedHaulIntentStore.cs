@@ -23,11 +23,19 @@ internal static class PlayerForcedHaulIntentStore
         lock (SyncRoot)
         {
             CleanupExpired();
+            var existingPiles = PendingByCreature.TryGetValue(creature, out var existingIntent)
+                ? existingIntent.PriorityPiles.Where(pile => pile != null && !pile.HasDisposed)
+                : Enumerable.Empty<ResourcePileInstance>();
+            var priorityPiles = PlayerForcedPriorityPlanner.MergePriorityOrder(
+                anchorPile,
+                existingPiles,
+                ReferenceEqualityComparer<ResourcePileInstance>.Instance);
             PendingByCreature[creature] = new PendingIntent(
                 anchorPile,
                 blueprintId,
                 anchorPile.GetPosition(),
-                RuntimeServices.Clock.RealtimeSinceStartup);
+                RuntimeServices.Clock.RealtimeSinceStartup,
+                priorityPiles);
         }
     }
 
@@ -81,12 +89,28 @@ internal static class PlayerForcedHaulIntentStore
             AnchorBlueprintId = anchorBlueprintId;
             AnchorPosition = anchorPosition;
             MarkedAt = markedAt;
+            PriorityPiles = new[] { anchorPile };
+        }
+
+        public PendingIntent(
+            ResourcePileInstance anchorPile,
+            string anchorBlueprintId,
+            Vector3 anchorPosition,
+            float markedAt,
+            IReadOnlyList<ResourcePileInstance> priorityPiles)
+        {
+            AnchorPile = anchorPile;
+            AnchorBlueprintId = anchorBlueprintId;
+            AnchorPosition = anchorPosition;
+            MarkedAt = markedAt;
+            PriorityPiles = priorityPiles;
         }
 
         public ResourcePileInstance AnchorPile { get; }
         public string AnchorBlueprintId { get; }
         public Vector3 AnchorPosition { get; }
         public float MarkedAt { get; }
+        public IReadOnlyList<ResourcePileInstance> PriorityPiles { get; }
     }
 }
 

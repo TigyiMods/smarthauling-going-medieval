@@ -179,7 +179,7 @@ internal static class HaulingDecisionTracePatch
         ref ObservedHaulPlanState observed)
     {
         var vanillaSnapshot = StockpileHaulingGoalState.CaptureVanillaPlan(goal, result);
-        if (!TryBuildPlayerForcedPlan(goal, originalFirstPile, originalFirstStorage))
+        if (!TryBuildPlayerForcedPlan(goal, originalFirstPile, originalFirstStorage, playerForcedIntent))
         {
             StockpileHaulingGoalState.RestoreVanillaPlan(goal, vanillaSnapshot);
             result = vanillaSnapshot.Result;
@@ -352,7 +352,11 @@ internal static class HaulingDecisionTracePatch
         return StockpileHaulingGoalState.FinalizeAugmentedPlan(goal, selectedPlan.SourcePriority, clusterAugment);
     }
 
-    private static bool TryBuildPlayerForcedPlan(StockpileHaulingGoal goal, ResourcePileInstance anchorPile, IStorage? preferredStorage)
+    private static bool TryBuildPlayerForcedPlan(
+        StockpileHaulingGoal goal,
+        ResourcePileInstance anchorPile,
+        IStorage? preferredStorage,
+        PlayerForcedHaulIntentStore.PendingIntent? playerForcedIntent)
     {
         if (goal.AgentOwner is not CreatureBase creature || goal.AgentOwner is not IStorageAgent { Storage: not null } storageAgent)
         {
@@ -396,6 +400,7 @@ internal static class HaulingDecisionTracePatch
 
         var pickupBudget = Math.Max(1, Mathf.Min(destinationBudget, requestedAmount));
         var sourcePatchPiles = BuildPlayerForcedSourcePatch(anchorPile);
+        var prioritySeedPiles = BuildPlayerForcedPrioritySeedPiles(anchorPile, playerForcedIntent);
 
         StockpileHaulingGoalState.ResetGoalState(goal);
 
@@ -412,6 +417,26 @@ internal static class HaulingDecisionTracePatch
             primaryStorage,
             sourcePriority,
             pickupBudget);
+
+        var addedPrioritySeeds = 0;
+        foreach (var priorityPile in prioritySeedPiles.Skip(1))
+        {
+            if (!TryQueuePlayerForcedPrioritySeed(goal, creature, priorityPile))
+            {
+                continue;
+            }
+
+            StockpileHaulingGoalState.QueueTarget(goal, TargetIndex.A, new TargetObject(priorityPile));
+            addedPrioritySeeds++;
+        }
+
+        if (addedPrioritySeeds > 0)
+        {
+            DiagnosticTrace.Info(
+                "haul.takeover",
+                $"Queued additional player-forced priority pickups for {goal.AgentOwner}: count={addedPrioritySeeds}, anchor={anchorPile.BlueprintId}",
+                120);
+        }
 
         var clusterAugment = StockpileClusterAugmentor.Apply(
             goal,
@@ -492,7 +517,7 @@ internal static class HaulingDecisionTracePatch
             ? Vector3.Distance(intent.Value.AnchorPosition, firstPile.GetPosition())
             : -1f;
         var samePile = firstPile != null && ReferenceEquals(intent.Value.AnchorPile, firstPile);
-        return $"anchor={intent.Value.AnchorBlueprintId}, match={samePile}, anchor->source={(anchorToSource >= 0f ? anchorToSource.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) : "n/a")}";
+        return $"anchor={intent.Value.AnchorBlueprintId}, pending={intent.Value.PriorityPiles.Count}, match={samePile}, anchor->source={(anchorToSource >= 0f ? anchorToSource.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) : "n/a")}";
     }
 
     private readonly struct ObservedHaulPlanState
@@ -686,6 +711,46 @@ internal static class HaulingDecisionTracePatch
             .Prepend(anchorPile)
             .Distinct(ReferenceEqualityComparer<ResourcePileInstance>.Instance)
             .ToList();
+    }
+
+    private static List<ResourcePileInstance> BuildPlayerForcedPrioritySeedPiles(
+        ResourcePileInstance anchorPile,
+        PlayerForcedHaulIntentStore.PendingIntent? playerForcedIntent)
+    {
+        var priorityPiles = playerForcedIntent.HasValue ? playerForcedIntent.Value.PriorityPiles : Array.Empty<ResourcePileInstance>();
+        return PlayerForcedPriorityPlanner.SelectLocalPrioritySeeds(
+                anchorPile,
+                priorityPiles,
+                StockpileHaulPolicy.PlayerForcedSourceClusterExtent,
+                pile => pile != null && !pile.HasDisposed,
+                pile => Vector3.Distance(anchorPile.GetPosition(), pile.GetPosition()),
+                ReferenceEqualityComparer<ResourcePileInstance>.Instance)
+            .ToList();
+    }
+
+    private static bool TryQueuePlayerForcedPrioritySeed(
+        StockpileHaulingGoal goal,
+        CreatureBase creature,
+        ResourcePileInstance pile)
+    {
+        if (pile == null ||
+            pile.HasDisposed ||
+            HaulFailureBackoffStore.IsCoolingDown(pile) ||
+            !ClusterOwnershipStore.CanUsePile(creature, pile) ||
+            !HaulSourcePolicy.CanReachPile(goal, pile) ||
+            !HaulSourcePolicy.ValidatePile(goal, pile))
+        {
+            return false;
+        }
+
+        pile.ReserveAll();
+        if (RuntimeServices.Reservations.TryReserveObject(pile, goal.AgentOwner))
+        {
+            return true;
+        }
+
+        RuntimeServices.Reservations.ReleaseAll(pile);
+        return false;
     }
 
     private static int GetOptimisticPickupBudget(StockpileHaulingGoal goal, Resource blueprint)
