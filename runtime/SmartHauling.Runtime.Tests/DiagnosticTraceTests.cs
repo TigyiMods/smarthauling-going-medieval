@@ -61,10 +61,12 @@ public sealed class DiagnosticTraceTests : IDisposable
     [Fact]
     public void StartSession_AfterShutdown_RestartsWriterForNewTraceFile()
     {
+        // Arrange
         var firstTraceFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.first.trace.log");
         var secondTraceFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.second.trace.log");
         DiagnosticTrace.Configure(DiagnosticLogLevel.Trace);
 
+        // Act
         DiagnosticTrace.StartSession(firstTraceFilePath);
         DiagnosticTrace.Raw("test.restart", "first-session");
         DiagnosticTrace.Shutdown();
@@ -74,6 +76,7 @@ public sealed class DiagnosticTraceTests : IDisposable
         Assert.True(DiagnosticTrace.FlushPending(), "Expected the restarted async trace queue to flush within the timeout.");
         DiagnosticTrace.Shutdown();
 
+        // Assert
         Assert.Contains("[test.restart] first-session", File.ReadAllText(firstTraceFilePath));
         Assert.Contains("[test.restart] second-session", File.ReadAllText(secondTraceFilePath));
     }
