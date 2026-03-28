@@ -7,6 +7,9 @@ namespace SmartHauling.Runtime.Configuration;
 /// </summary>
 internal static class SmartHaulingSettings
 {
+    internal const bool DefaultEnableDiagnosticTrace = false;
+    internal const DiagnosticLogLevel DefaultDiagnosticTraceLevel = DiagnosticLogLevel.Error;
+
     private static ConfigEntry<bool>? enableDiagnosticTrace;
     private static ConfigEntry<DiagnosticLogLevel>? diagnosticTraceLevel;
     private static ConfigEntry<bool>? enableStallWatchdog;
@@ -14,8 +17,8 @@ internal static class SmartHaulingSettings
 
     public static DiagnosticLogLevel DiagnosticTraceLevel =>
         ResolveDiagnosticTraceLevel(
-            enableDiagnosticTrace?.Value ?? true,
-            diagnosticTraceLevel?.Value ?? DiagnosticLogLevel.Trace);
+            enableDiagnosticTrace?.Value ?? DefaultEnableDiagnosticTrace,
+            diagnosticTraceLevel?.Value ?? DefaultDiagnosticTraceLevel);
 
     public static bool EnableStallWatchdog => enableStallWatchdog?.Value ?? true;
 
@@ -27,13 +30,13 @@ internal static class SmartHaulingSettings
         enableDiagnosticTrace = config.Bind(
             "Tracing",
             "EnableDiagnosticTrace",
-            true,
+            DefaultEnableDiagnosticTrace,
             "Legacy master switch for diagnostic tracing. If false, tracing is fully disabled regardless of DiagnosticTraceLevel.");
 
         diagnosticTraceLevel = config.Bind(
             "Tracing",
             "DiagnosticTraceLevel",
-            DiagnosticLogLevel.Trace,
+            DefaultDiagnosticTraceLevel,
             "Minimum diagnostic log level. Valid values: Off, Error, Info, Trace.");
 
         enableStallWatchdog = config.Bind(

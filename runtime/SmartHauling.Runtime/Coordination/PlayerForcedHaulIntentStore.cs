@@ -111,6 +111,19 @@ internal static class PlayerForcedHaulIntentStore
         public Vector3 AnchorPosition { get; }
         public float MarkedAt { get; }
         public IReadOnlyList<ResourcePileInstance> PriorityPiles { get; }
+
+        public bool ContainsPriorityPile(ResourcePileInstance? pile)
+        {
+            if (pile == null)
+            {
+                return false;
+            }
+
+            return PlayerForcedPriorityPlanner.ContainsCandidate(
+                pile,
+                PriorityPiles,
+                ReferenceEqualityComparer<ResourcePileInstance>.Instance);
+        }
     }
 }
 

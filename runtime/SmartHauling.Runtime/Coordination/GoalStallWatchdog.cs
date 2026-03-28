@@ -14,6 +14,52 @@ internal static class GoalStallWatchdog
 {
     private static readonly ConditionalWeakTable<Goal, StallState> States = new();
 
+    internal readonly struct AnchorSignature : IEquatable<AnchorSignature>
+    {
+        public AnchorSignature(
+            string goalType,
+            int positionX,
+            int positionY,
+            int positionZ,
+            int carryCount)
+        {
+            GoalType = goalType;
+            PositionX = positionX;
+            PositionY = positionY;
+            PositionZ = positionZ;
+            CarryCount = carryCount;
+        }
+
+        public string GoalType { get; }
+
+        public int PositionX { get; }
+
+        public int PositionY { get; }
+
+        public int PositionZ { get; }
+
+        public int CarryCount { get; }
+
+        public bool Equals(AnchorSignature other)
+        {
+            return GoalType == other.GoalType &&
+                   PositionX == other.PositionX &&
+                   PositionY == other.PositionY &&
+                   PositionZ == other.PositionZ &&
+                   CarryCount == other.CarryCount;
+        }
+
+        public override bool Equals(object? obj)
+        {
+            return obj is AnchorSignature other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            return HashCode.Combine(GoalType, PositionX, PositionY, PositionZ, CarryCount);
+        }
+    }
+
     internal readonly struct Signature : IEquatable<Signature>
     {
         public Signature(
@@ -121,6 +167,12 @@ internal static class GoalStallWatchdog
         public Signature Signature { get; set; }
 
         public float LastProgressAt { get; set; }
+
+        public AnchorSignature AnchorSignature { get; set; }
+
+        public float LastAnchorProgressAt { get; set; }
+
+        public float LastSnapshotLoggedAt { get; set; } = -1f;
     }
 
     public static bool TryAbortStalledGoal(Goal goal)
@@ -135,8 +187,11 @@ internal static class GoalStallWatchdog
         }
 
         var signature = BuildSignature(goal, creature, storageAgent.Storage.GetTotalStoredCount());
+        var anchorSignature = BuildAnchorSignature(goal, creature, signature.CarryCount);
         var now = RuntimeServices.Clock.RealtimeSinceStartup;
         var evaluation = Observe(goal, signature, now, SmartHaulingSettings.StallWatchdogTimeoutSeconds);
+        var anchorEvaluation = ObserveAnchor(goal, anchorSignature, now, SmartHaulingSettings.StallWatchdogTimeoutSeconds);
+        TryLogPotentialStall(goal, signature, anchorEvaluation, now);
         if (!evaluation.IsStalled)
         {
             return false;
@@ -165,6 +220,30 @@ internal static class GoalStallWatchdog
         Signature? previousSignature,
         float previousProgressAt,
         Signature currentSignature,
+        float now,
+        float timeoutSeconds)
+    {
+        if (previousSignature == null || !previousSignature.Value.Equals(currentSignature))
+        {
+            return new Evaluation(
+                hasProgressed: true,
+                isStalled: false,
+                lastProgressAt: now,
+                stallDuration: 0f);
+        }
+
+        var stallDuration = now - previousProgressAt;
+        return new Evaluation(
+            hasProgressed: false,
+            isStalled: stallDuration >= timeoutSeconds,
+            lastProgressAt: previousProgressAt,
+            stallDuration: stallDuration);
+    }
+
+    internal static Evaluation EvaluateAnchor(
+        AnchorSignature? previousSignature,
+        float previousProgressAt,
+        AnchorSignature currentSignature,
         float now,
         float timeoutSeconds)
     {
@@ -219,6 +298,41 @@ internal static class GoalStallWatchdog
         return evaluation;
     }
 
+    private static Evaluation ObserveAnchor(
+        Goal goal,
+        AnchorSignature signature,
+        float now,
+        float timeoutSeconds)
+    {
+        if (!States.TryGetValue(goal, out var state))
+        {
+            state = States.GetOrCreateValue(goal);
+            state.AnchorSignature = signature;
+            state.LastAnchorProgressAt = now;
+            return new Evaluation(
+                hasProgressed: true,
+                isStalled: false,
+                lastProgressAt: now,
+                stallDuration: 0f);
+        }
+
+        var evaluation = EvaluateAnchor(
+            state.AnchorSignature,
+            state.LastAnchorProgressAt,
+            signature,
+            now,
+            timeoutSeconds);
+
+        if (evaluation.HasProgressed)
+        {
+            state.AnchorSignature = signature;
+            state.LastAnchorProgressAt = evaluation.LastProgressAt;
+            state.LastSnapshotLoggedAt = -1f;
+        }
+
+        return evaluation;
+    }
+
     private static bool IsRelevant(Goal goal)
     {
         return goal is StockpileHaulingGoal || goal is SmartHauling.Runtime.Goals.SmartUnloadGoal;
@@ -250,6 +364,33 @@ internal static class GoalStallWatchdog
             targetBIdentity: GetTargetIdentity(goal.GetTarget(TargetIndex.B)),
             dropFailures: dropFailures,
             dropPhaseLocked: dropPhaseLocked);
+    }
+
+    private static AnchorSignature BuildAnchorSignature(Goal goal, CreatureBase creature, int carryCount)
+    {
+        var position = creature.GetPosition();
+        return new AnchorSignature(
+            goal.GetType().Name,
+            positionX: (int)System.MathF.Round(position.x),
+            positionY: (int)System.MathF.Round(position.y),
+            positionZ: (int)System.MathF.Round(position.z),
+            carryCount: carryCount);
+    }
+
+    private static void TryLogPotentialStall(Goal goal, Signature signature, Evaluation anchorEvaluation, float now)
+    {
+        if (!anchorEvaluation.IsStalled ||
+            !States.TryGetValue(goal, out var state) ||
+            now - state.LastSnapshotLoggedAt < SmartHaulingSettings.StallWatchdogTimeoutSeconds)
+        {
+            return;
+        }
+
+        state.LastSnapshotLoggedAt = now;
+        DiagnosticTrace.Info(
+            "watchdog.snapshot",
+            $"Potential visual stall on {goal.GetType().Name} for {goal.AgentOwner}: action={signature.ActionId}, stall={anchorEvaluation.StallDuration:0.0}s, carry={signature.CarryCount}, pickupQueue={signature.PickupQueueCount}, targetA={signature.TargetAIdentity}, targetB={signature.TargetBIdentity}, dropFailures={signature.DropFailures}, dropLocked={signature.DropPhaseLocked}",
+            120);
     }
 
     private static int GetTargetIdentity(TargetObject target)

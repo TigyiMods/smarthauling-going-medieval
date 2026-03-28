@@ -5,6 +5,13 @@ namespace SmartHauling.Runtime.Tests;
 public sealed class SmartHaulingSettingsTests
 {
     [Fact]
+    public void DiagnosticTracing_DefaultsToOptInErrorOnlyConfiguration()
+    {
+        Assert.False(SmartHaulingSettings.DefaultEnableDiagnosticTrace);
+        Assert.Equal(DiagnosticLogLevel.Error, SmartHaulingSettings.DefaultDiagnosticTraceLevel);
+    }
+
+    [Fact]
     public void ResolveDiagnosticTraceLevel_WhenLegacySwitchIsDisabled_ReturnsOff()
     {
         // Arrange

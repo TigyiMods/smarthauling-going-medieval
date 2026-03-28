@@ -9,11 +9,13 @@ public sealed class StockpileHaulOriginClassifierTests
             playerForcedIntent: new PlayerForcedHaulIntentStore.PendingIntent(default!, "stew", default, 0f),
             playerForcedSourceMatches: true,
             playerForcedAnchorToSourceDistance: 0f,
+            isUrgentPriorityHaul: false,
             recentGoal: new RecentGoalOriginStore.RecentGoalEndContext("ProductionCookingGoal", RecentGoalClass.LocalProducer, "<none>", default, 0f, 0, "<none>"),
             agentToSourceDistance: 2f,
             carryAtStart: 0);
 
         Assert.Equal(StockpileHaulOriginCategory.PlayerForced, classification.Category);
+        Assert.Equal("player-forced-priority-match", classification.Reason);
     }
 
     [Fact]
@@ -23,6 +25,7 @@ public sealed class StockpileHaulOriginClassifierTests
             playerForcedIntent: null,
             playerForcedSourceMatches: false,
             playerForcedAnchorToSourceDistance: -1f,
+            isUrgentPriorityHaul: false,
             recentGoal: new RecentGoalOriginStore.RecentGoalEndContext("ProductionCookingGoal", RecentGoalClass.LocalProducer, "<none>", default, 0f, 0, "<none>"),
             agentToSourceDistance: 2.3f,
             carryAtStart: 0);
@@ -38,6 +41,7 @@ public sealed class StockpileHaulOriginClassifierTests
             playerForcedIntent: null,
             playerForcedSourceMatches: false,
             playerForcedAnchorToSourceDistance: -1f,
+            isUrgentPriorityHaul: false,
             recentGoal: new RecentGoalOriginStore.RecentGoalEndContext("ProductionCookingGoal", RecentGoalClass.LocalProducer, "<none>", default, 0f, 0, "<none>"),
             agentToSourceDistance: 9f,
             carryAtStart: 0);
@@ -52,6 +56,7 @@ public sealed class StockpileHaulOriginClassifierTests
             playerForcedIntent: null,
             playerForcedSourceMatches: false,
             playerForcedAnchorToSourceDistance: -1f,
+            isUrgentPriorityHaul: false,
             recentGoal: new RecentGoalOriginStore.RecentGoalEndContext("StockpileHaulingGoal", RecentGoalClass.Other, "<none>", default, 0f, 0, "<none>"),
             agentToSourceDistance: 1.5f,
             carryAtStart: 0);
@@ -67,11 +72,44 @@ public sealed class StockpileHaulOriginClassifierTests
             playerForcedIntent: new PlayerForcedHaulIntentStore.PendingIntent(default!, "wood", default, 0f),
             playerForcedSourceMatches: false,
             playerForcedAnchorToSourceDistance: 3f,
+            isUrgentPriorityHaul: false,
             recentGoal: new RecentGoalOriginStore.RecentGoalEndContext("StockpileHaulingGoal", RecentGoalClass.Other, "<none>", default, 0f, 0, "<none>"),
             agentToSourceDistance: 8f,
             carryAtStart: 0);
 
         Assert.Equal(StockpileHaulOriginCategory.PlayerForced, classification.Category);
+    }
+
+    [Fact]
+    public void Classify_ReturnsUrgentPriorityReason_WhenUrgentManualHaulMatches()
+    {
+        var classification = StockpileHaulOriginClassifier.Classify(
+            playerForcedIntent: new PlayerForcedHaulIntentStore.PendingIntent(default!, "sticks", default, 0f),
+            playerForcedSourceMatches: true,
+            playerForcedAnchorToSourceDistance: 0f,
+            isUrgentPriorityHaul: true,
+            recentGoal: null,
+            agentToSourceDistance: 4f,
+            carryAtStart: 0);
+
+        Assert.Equal(StockpileHaulOriginCategory.PlayerForced, classification.Category);
+        Assert.Equal("urgent-priority-match", classification.Reason);
+    }
+
+    [Fact]
+    public void Classify_ReturnsUrgentAnchorOverride_WhenUrgentIntentNeedsReseed()
+    {
+        var classification = StockpileHaulOriginClassifier.Classify(
+            playerForcedIntent: new PlayerForcedHaulIntentStore.PendingIntent(default!, "oak_sapling", default, 0f),
+            playerForcedSourceMatches: false,
+            playerForcedAnchorToSourceDistance: 12f,
+            isUrgentPriorityHaul: true,
+            recentGoal: null,
+            agentToSourceDistance: 12f,
+            carryAtStart: 0);
+
+        Assert.Equal(StockpileHaulOriginCategory.PlayerForced, classification.Category);
+        Assert.Equal("urgent-anchor-override", classification.Reason);
     }
 
     [Theory]

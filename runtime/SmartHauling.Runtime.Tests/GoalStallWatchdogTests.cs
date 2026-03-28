@@ -80,6 +80,48 @@ public sealed class GoalStallWatchdogTests
         Assert.Equal(11f, result.StallDuration);
     }
 
+    [Fact]
+    public void EvaluateAnchor_WhenVisualStateStaysTheSamePastTimeout_ReportsStall()
+    {
+        // Arrange
+        var anchor = CreateAnchorSignature(goalType: "StockpileHaulingGoal", carryCount: 27);
+        const float previousProgressAt = 5f;
+        const float now = 16f;
+        const float timeoutSeconds = 10f;
+
+        // Act
+        var result = GoalStallWatchdog.EvaluateAnchor(anchor, previousProgressAt, anchor, now, timeoutSeconds);
+
+        // Assert
+        Assert.False(result.HasProgressed);
+        Assert.True(result.IsStalled);
+        Assert.Equal(previousProgressAt, result.LastProgressAt);
+        Assert.Equal(11f, result.StallDuration);
+    }
+
+    [Fact]
+    public void EvaluateAnchor_WhenOnlyInternalGoalDetailsChange_StillTreatsSameVisualStateAsStalled()
+    {
+        // Arrange
+        var previousSignature = CreateSignature(actionId: "GoToTarget", carryCount: 27, pickupQueueCount: 3);
+        var currentSignature = CreateSignature(actionId: "PickupResourceFromPile", carryCount: 27, pickupQueueCount: 2);
+        var previousAnchor = CreateAnchorSignature(goalType: "StockpileHaulingGoal", carryCount: 27);
+        var currentAnchor = CreateAnchorSignature(goalType: "StockpileHaulingGoal", carryCount: 27);
+        const float previousProgressAt = 5f;
+        const float now = 16f;
+        const float timeoutSeconds = 10f;
+
+        // Act
+        var detailed = GoalStallWatchdog.Evaluate(previousSignature, previousProgressAt, currentSignature, now, timeoutSeconds);
+        var anchor = GoalStallWatchdog.EvaluateAnchor(previousAnchor, previousProgressAt, currentAnchor, now, timeoutSeconds);
+
+        // Assert
+        Assert.True(detailed.HasProgressed);
+        Assert.False(detailed.IsStalled);
+        Assert.False(anchor.HasProgressed);
+        Assert.True(anchor.IsStalled);
+    }
+
     private static GoalStallWatchdog.Signature CreateSignature(string actionId, int carryCount, int pickupQueueCount)
     {
         return new GoalStallWatchdog.Signature(
@@ -93,5 +135,15 @@ public sealed class GoalStallWatchdogTests
             targetBIdentity: 202,
             dropFailures: 0,
             dropPhaseLocked: false);
+    }
+
+    private static GoalStallWatchdog.AnchorSignature CreateAnchorSignature(string goalType, int carryCount)
+    {
+        return new GoalStallWatchdog.AnchorSignature(
+            goalType: goalType,
+            positionX: 1,
+            positionY: 2,
+            positionZ: 3,
+            carryCount: carryCount);
     }
 }

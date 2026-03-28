@@ -51,5 +51,6 @@ public sealed class SmartHaulingPlugin : BaseUnityPlugin
     private void OnDestroy()
     {
         DiagnosticTrace.Raw("bootstrap", "Plugin OnDestroy invoked. Harmony remains patched; runtime activation is patch-driven.");
+        DiagnosticTrace.Shutdown();
     }
 }

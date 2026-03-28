@@ -18,11 +18,17 @@ This file follows a lightweight Keep a Changelog style.
 - Board-owned smart executor takeover is now gated more narrowly to explicitly coordinated stockpile tasks.
 - Player-forced hauling documentation now reflects anchor-first pickup with local carry-filling extension behavior.
 - Smart hauling status text handling now normalizes leaked placeholder keys through localized fallback labels.
+- Diagnostic tracing now defaults to opt-in with `EnableDiagnosticTrace = false` and `DiagnosticTraceLevel = Error`.
+- Diagnostic trace file writes now run through a batched background writer instead of synchronous per-line file appends on the game thread.
 
 ### Fixed
 
 - Production delivery now falls back to vanilla behavior unless a mixed collect plan is active, which prevents dismantling and other single-resource jobs from looping on pickup and drop.
 - Player-forced hauling now keeps recently prioritized nearby pickups ahead of non-priority fillers when extending a smart local haul.
+- Player-forced smart hauling now recognizes any pending priority-haul pickup in the local batch instead of only the latest anchor pile.
+- Priority-haul ground items routed through `StockpileUrgentHaulingGoal` now use the same local smart extension path, keeping urgent pickups ahead of filler loads.
+- Trace-level SmartHauling diagnostics no longer synchronously spam `LogOutput.log`, which reduces debug-mode logging overhead during long-running colonies.
+- Added a visual stall snapshot path for hauling goals so stationary `Hauling (smart)` stalls are logged even when internal target state jitters and the hard watchdog does not abort.
 
 ## [2.2.0] - 2026-03-24
 

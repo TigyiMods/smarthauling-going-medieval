@@ -3,6 +3,47 @@ namespace SmartHauling.Runtime.Tests;
 public sealed class PlayerForcedPriorityPlannerTests
 {
     [Fact]
+    public void SelectPreferredAnchor_WhenPreferredIsValid_ReturnsPreferredEvenIfFarther()
+    {
+        var preferred = new Candidate("preferred", 8f, true);
+        var nearby = new Candidate("nearby", 2f, true);
+
+        var selected = PlayerForcedPriorityPlanner.SelectPreferredAnchor(
+            preferred,
+            new[] { nearby },
+            isValid: candidate => candidate.Valid,
+            getScore: candidate => candidate.Distance);
+
+        Assert.Same(preferred, selected);
+    }
+
+    [Fact]
+    public void SelectPreferredAnchor_WhenPreferredIsInvalid_FallsBackToBestValidCandidate()
+    {
+        var invalidPreferred = new Candidate("preferred", 1f, false);
+        var farther = new Candidate("farther", 5f, true);
+        var nearest = new Candidate("nearest", 2f, true);
+
+        var selected = PlayerForcedPriorityPlanner.SelectPreferredAnchor(
+            invalidPreferred,
+            new[] { farther, nearest },
+            isValid: candidate => candidate.Valid,
+            getScore: candidate => candidate.Distance);
+
+        Assert.Same(nearest, selected);
+    }
+
+    [Fact]
+    public void ContainsCandidate_ReturnsTrueForNonAnchorPriorityCandidate()
+    {
+        var anchor = new Candidate("anchor", 0f, true);
+        var secondary = new Candidate("secondary", 1f, true);
+
+        Assert.True(PlayerForcedPriorityPlanner.ContainsCandidate(secondary, new[] { anchor, secondary }));
+        Assert.False(PlayerForcedPriorityPlanner.ContainsCandidate(new Candidate("other", 2f, true), new[] { anchor, secondary }));
+    }
+
+    [Fact]
     public void MergePriorityOrder_WhenAnchorAlreadyExists_MovesItToFrontWithoutDuplicates()
     {
         var first = new Candidate("first", 0f, true);

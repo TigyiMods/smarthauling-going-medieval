@@ -2,6 +2,71 @@ namespace SmartHauling.Runtime;
 
 internal static class PlayerForcedPriorityPlanner
 {
+    public static T? SelectPreferredAnchor<T>(
+        T? preferredAnchor,
+        IEnumerable<T>? candidates,
+        Func<T, bool> isValid,
+        Func<T, float> getScore,
+        IEqualityComparer<T>? comparer = null)
+        where T : class
+    {
+        if (preferredAnchor != null && isValid(preferredAnchor))
+        {
+            return preferredAnchor;
+        }
+
+        if (candidates == null)
+        {
+            return null;
+        }
+
+        var distinctComparer = comparer ?? EqualityComparer<T>.Default;
+        var seen = new HashSet<T>(distinctComparer);
+        T? best = null;
+        var bestScore = float.MaxValue;
+
+        foreach (var candidate in candidates)
+        {
+            if (candidate == null ||
+                !seen.Add(candidate) ||
+                !isValid(candidate))
+            {
+                continue;
+            }
+
+            var score = getScore(candidate);
+            if (best == null || score < bestScore)
+            {
+                best = candidate;
+                bestScore = score;
+            }
+        }
+
+        return best;
+    }
+
+    public static bool ContainsCandidate<T>(
+        T candidate,
+        IEnumerable<T>? candidates,
+        IEqualityComparer<T>? comparer = null)
+    {
+        if (candidate == null || candidates == null)
+        {
+            return false;
+        }
+
+        var distinctComparer = comparer ?? EqualityComparer<T>.Default;
+        foreach (var current in candidates)
+        {
+            if (distinctComparer.Equals(current, candidate))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static IReadOnlyList<T> MergePriorityOrder<T>(
         T anchor,
         IEnumerable<T>? existing,

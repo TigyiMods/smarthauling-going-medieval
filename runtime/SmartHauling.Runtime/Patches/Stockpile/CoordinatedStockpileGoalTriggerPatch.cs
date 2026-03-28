@@ -10,6 +10,7 @@ namespace SmartHauling.Runtime.Patches;
 internal static class CoordinatedStockpileGoalTriggerPatch
 {
     private const string StockpileGoalId = "StockpileHaulingGoal";
+    private const string StockpileUrgentGoalId = "StockpileUrgentHaulingGoal";
 
     [HarmonyLib.HarmonyPrefix]
     private static void Prefix(WorkerGoapAgent __instance)
@@ -41,8 +42,15 @@ internal static class CoordinatedStockpileGoalTriggerPatch
             return;
         }
 
+        var creature = __instance.AgentOwner as CreatureBase;
+        if (TryForceUrgentHaulingGoal(__instance, creature))
+        {
+            return;
+        }
+
         if (!HaulingGoalPriorityGate.TryAllowForcedHauling(
                 __instance.GetJobPriority,
+                JobType.Hauling,
                 out var blockingJob,
                 out var blockingPriority))
         {
@@ -73,7 +81,6 @@ internal static class CoordinatedStockpileGoalTriggerPatch
         // If the board-owned boundary proves too strict, relax the trigger conditions here first.
         // Do not widen downstream StockpileHaulingGoal patches again, or vanilla/player-issued hauling
         // will get hijacked the same way as before.
-        var creature = __instance.AgentOwner as CreatureBase;
         if (creature != null)
         {
             CoordinatedStockpileIntentStore.MarkPending(creature);
@@ -86,6 +93,40 @@ internal static class CoordinatedStockpileGoalTriggerPatch
             200);
     }
 
+    private static bool TryForceUrgentHaulingGoal(WorkerGoapAgent workerAgent, CreatureBase? creature)
+    {
+        if (!StockpileTaskBoard.HasPendingUrgentTask())
+        {
+            return false;
+        }
+
+        if (!HaulingGoalPriorityGate.TryAllowForcedHauling(
+                workerAgent.GetJobPriority,
+                JobType.UrgentHaul,
+                out var blockingJob,
+                out var blockingPriority))
+        {
+            if (blockingJob.HasValue)
+            {
+                DiagnosticTrace.Raw(
+                    "haul.priority",
+                    $"Skipped forced {StockpileUrgentGoalId} for {workerAgent.AgentOwner}: blockingJob={blockingJob.Value}, blockingPriority={blockingPriority:0.##}, urgentPriority={workerAgent.GetJobPriority(JobType.UrgentHaul):0.##}");
+            }
+
+            DiagnosticTrace.Info(
+                "haul.trigger",
+                $"Skipped smart trigger for {workerAgent.AgentOwner}: reason=urgent-priority-gate, blockingJob={blockingJob?.ToString() ?? "<none>"}, blockingPriority={blockingPriority:0.##}, urgentPriority={workerAgent.GetJobPriority(JobType.UrgentHaul):0.##}, recent={DescribeRecentGoal(creature)}",
+                200);
+            return false;
+        }
+
+        workerAgent.ForceNextGoal(StockpileUrgentGoalId);
+        DiagnosticTrace.Info(
+            "haul.trigger",
+            $"Forced next {StockpileUrgentGoalId} for {workerAgent.AgentOwner}: urgentPriority={workerAgent.GetJobPriority(JobType.UrgentHaul):0.##}, recent={DescribeRecentGoal(creature)}",
+            200);
+        return true;
+    }
     private static string DescribeRecentGoal(CreatureBase? creature)
     {
         if (creature == null || !RecentGoalOriginStore.TryGetRecent(creature, out var recent))

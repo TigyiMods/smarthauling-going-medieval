@@ -14,13 +14,14 @@ internal static class HaulingGoalPriorityGate
 
     public static bool TryAllowForcedHauling(
         Func<JobType, float> getJobPriority,
+        JobType haulingJob,
         out JobType? blockingJob,
         out float blockingPriority)
     {
         blockingJob = null;
         blockingPriority = float.MaxValue;
 
-        var haulingPriority = getJobPriority(JobType.Hauling);
+        var haulingPriority = getJobPriority(haulingJob);
         if (!IsUsablePriority(haulingPriority))
         {
             return false;
@@ -28,6 +29,11 @@ internal static class HaulingGoalPriorityGate
 
         foreach (var job in CompetingJobs)
         {
+            if (job == haulingJob)
+            {
+                continue;
+            }
+
             var priority = getJobPriority(job);
             if (!IsUsablePriority(priority) || priority > haulingPriority + PriorityEqualityEpsilon)
             {
