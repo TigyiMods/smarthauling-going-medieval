@@ -19,6 +19,10 @@ This file follows a lightweight Keep a Changelog style.
 - Player-forced hauling documentation now reflects anchor-first pickup with local carry-filling extension behavior.
 - Smart hauling status text handling now normalizes leaked placeholder keys through localized fallback labels.
 
+### Fixed
+
+- Production delivery now falls back to vanilla behavior unless a mixed collect plan is active, which prevents dismantling and other single-resource jobs from looping on pickup and drop.
+
 ## [2.2.0] - 2026-03-24
 
 ### Changed

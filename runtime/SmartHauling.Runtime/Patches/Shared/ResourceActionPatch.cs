@@ -19,6 +19,9 @@ internal static class ResourceActionPatch
     private static readonly AccessTools.FieldRef<HaulingBaseGoal, int> PickedCountRef =
         AccessTools.FieldRefAccess<HaulingBaseGoal, int>("PickedCount");
 
+    private static readonly AccessTools.FieldRef<GoapAction, Goal> ActionGoalRef =
+        AccessTools.FieldRefAccess<GoapAction, Goal>("goal");
+
     [HarmonyPatch(
         typeof(ResourceActions),
         nameof(ResourceActions.PickupResourceFromPile),
@@ -196,9 +199,18 @@ internal static class ResourceActionPatch
             return;
         }
 
+        var vanillaAction = __result;
         var action = new GoapAction("DeliverProductionResource");
+
         action.OnInit = delegate
         {
+            // Keep single-resource and special production flows on the game's native delivery action.
+            if (!ShouldUseSmartProductionDelivery(action.Goal))
+            {
+                RunVanillaProductionDelivery(vanillaAction, action);
+                return;
+            }
+
             var target = action.Goal.GetTarget(index);
             var storageAgent = (IStorageAgent)action.AgentOwner;
             var productionComponent = target.GetObjectAs<ProductionComponentInstance>();
@@ -267,6 +279,15 @@ internal static class ResourceActionPatch
 
             action.Complete(ActionCompletionStatus.Error);
         };
+        action.OnTick = deltaTime =>
+        {
+            if (action.HasCompleted || ShouldUseSmartProductionDelivery(action.Goal))
+            {
+                return;
+            }
+
+            TickVanillaProductionDelivery(vanillaAction, action, deltaTime);
+        };
         __result = action;
     }
 
@@ -320,6 +341,11 @@ internal static class ResourceActionPatch
         return MatchesAny(production.Blueprint.Recipe, resource) || MatchesAny(production.Blueprint.SecondaryRecipe, resource);
     }
 
+    internal static bool ShouldUseSmartProductionDelivery(Goal goal)
+    {
+        return goal != null && MixedCollectPlanStore.HasMixedPlan(goal);
+    }
+
     private static bool MatchesAny(IEnumerable<NSEipix.Model.KeyIntPair> recipe, ResourceInstance resource)
     {
         foreach (var ingredient in recipe)
@@ -342,6 +368,33 @@ internal static class ResourceActionPatch
         }
 
         return false;
+    }
+
+    private static void RunVanillaProductionDelivery(GoapAction vanillaAction, GoapAction wrapperAction)
+    {
+        ActionGoalRef(vanillaAction) = wrapperAction.Goal;
+        vanillaAction.Init();
+        SyncVanillaProductionDeliveryCompletion(vanillaAction, wrapperAction);
+    }
+
+    private static void TickVanillaProductionDelivery(GoapAction vanillaAction, GoapAction wrapperAction, float deltaTime)
+    {
+        if (!vanillaAction.HasCompleted)
+        {
+            vanillaAction.Tick(deltaTime);
+        }
+
+        SyncVanillaProductionDeliveryCompletion(vanillaAction, wrapperAction);
+    }
+
+    private static void SyncVanillaProductionDeliveryCompletion(GoapAction vanillaAction, GoapAction wrapperAction)
+    {
+        if (!vanillaAction.HasCompleted || wrapperAction.HasCompleted)
+        {
+            return;
+        }
+
+        wrapperAction.Complete(vanillaAction.CompletionStatus);
     }
 
     private static void UpdateHaulingPickedCount(Goal goal, Storage storage)
