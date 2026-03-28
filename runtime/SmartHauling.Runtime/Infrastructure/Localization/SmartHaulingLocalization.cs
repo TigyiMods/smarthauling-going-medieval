@@ -11,9 +11,9 @@ internal static class SmartHaulingLocalization
     internal const string StockpileHaulingGoalNameTerm = "Mods/SmartHauling/GoalName/StockpileHauling";
     internal const string SmartUnloadGoalNameTerm = "Mods/SmartHauling/GoalName/SmartUnload";
 
-    private const string DefaultSmartSuffix = "(smart)";
-    private const string DefaultStockpileHaulingGoalName = "Hauling";
-    private const string DefaultSmartUnloadGoalName = "Unloading";
+    internal const string DefaultSmartSuffix = "(smart)";
+    internal const string DefaultStockpileHaulingGoalName = "Hauling";
+    internal const string DefaultSmartUnloadGoalName = "Unloading";
 
     private static readonly System.Reflection.MethodInfo AddSourceMethod =
         AccessTools.Method(typeof(LocalizationManager), "AddSource", new[] { typeof(LanguageSourceData) })!;

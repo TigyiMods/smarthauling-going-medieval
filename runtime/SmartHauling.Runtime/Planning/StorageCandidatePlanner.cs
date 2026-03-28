@@ -11,6 +11,7 @@ using NSMedieval.Model;
 using NSMedieval.State;
 using NSMedieval.Stockpiles;
 using NSMedieval.StorageUniversal;
+using SmartHauling.Runtime.Infrastructure.Reflection;
 using UnityEngine;
 
 namespace SmartHauling.Runtime;
@@ -335,24 +336,7 @@ internal static class StorageCandidatePlanner
 
     internal static Vector3? TryGetPosition(object? instance)
     {
-        if (instance == null)
-        {
-            return null;
-        }
-
-        var method = AccessTools.Method(instance.GetType(), "GetPosition", Type.EmptyTypes);
-        if (method == null)
-        {
-            return null;
-        }
-
-        var result = method.Invoke(instance, null);
-        return result switch
-        {
-            Vector3 vector => vector,
-            Vec3Int cell => new Vector3(cell.x, cell.y, cell.z),
-            _ => null
-        };
+        return PositionReflection.TryGetPosition(instance);
     }
 
     internal sealed class StorageCandidatePlan

@@ -1,5 +1,7 @@
 using NSMedieval.Goap;
+using NSMedieval.State;
 using NSMedieval.State.WorkerJobs;
+using SmartHauling.Runtime.Composition;
 using SmartHauling.Runtime.Goals;
 
 namespace SmartHauling.Runtime.Patches;
@@ -51,18 +53,48 @@ internal static class CoordinatedStockpileGoalTriggerPatch
                     $"Skipped forced {StockpileGoalId} for {__instance.AgentOwner}: blockingJob={blockingJob.Value}, blockingPriority={blockingPriority:0.##}, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}");
             }
 
+            DiagnosticTrace.Info(
+                "haul.trigger",
+                $"Skipped smart trigger for {__instance.AgentOwner}: reason=priority-gate, blockingJob={blockingJob?.ToString() ?? "<none>"}, blockingPriority={blockingPriority:0.##}, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
+                200);
+
             return;
         }
 
         if (!StockpileTaskBoard.HasAssignableTask(__instance))
         {
+            DiagnosticTrace.Info(
+                "haul.trigger",
+                $"Skipped smart trigger for {__instance.AgentOwner}: reason=no-assignable-task, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
+                200);
             return;
+        }
+
+        // If the board-owned boundary proves too strict, relax the trigger conditions here first.
+        // Do not widen downstream StockpileHaulingGoal patches again, or vanilla/player-issued hauling
+        // will get hijacked the same way as before.
+        var creature = __instance.AgentOwner as CreatureBase;
+        if (creature != null)
+        {
+            CoordinatedStockpileIntentStore.MarkPending(creature);
         }
 
         __instance.ForceNextGoal(StockpileGoalId);
         DiagnosticTrace.Info(
-            "haul.plan",
-            $"Forced next {StockpileGoalId} for {__instance.AgentOwner}: haulingPriority=Highest",
-            80);
+            "haul.trigger",
+            $"Forced next {StockpileGoalId} for {__instance.AgentOwner}: haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}, recent={DescribeRecentGoal(creature)}",
+            200);
+    }
+
+    private static string DescribeRecentGoal(CreatureBase? creature)
+    {
+        if (creature == null || !RecentGoalOriginStore.TryGetRecent(creature, out var recent))
+        {
+            return "<none>";
+        }
+
+        var age = RuntimeServices.Clock.RealtimeSinceStartup - recent.EndedAt;
+        return $"{recent.GoalType}/{recent.Condition} action={recent.ActionId} age={age:0.00}s carry={recent.CarryCount} [{recent.CarrySummary}]";
     }
 }
+

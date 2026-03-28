@@ -48,7 +48,7 @@ internal static class StockpileTaskSeedFactory
             patchSweepAmountThreshold,
             patchSweepCountThreshold);
         var fullSourcePatchPiles = usePatchSweep
-            ? BuildPatchComponent(firstPile, sameTypePiles, patchSweepExtent, patchSweepLinkExtent)
+            ? StockpilePileTopology.BuildPatchComponent(firstPile, sameTypePiles, patchSweepExtent, patchSweepLinkExtent)
             : new HashSet<ResourcePileInstance>(
                 sameTypePiles.Where(pile => Vector3.Distance(firstPile.GetPosition(), pile.GetPosition()) <= sourceClusterExtent),
                 ReferenceEqualityComparer<ResourcePileInstance>.Instance);
@@ -124,46 +124,12 @@ internal static class StockpileTaskSeedFactory
             score);
     }
 
-    private static HashSet<ResourcePileInstance> BuildPatchComponent(
-        ResourcePileInstance firstPile,
-        IReadOnlyCollection<ResourcePileInstance> sameTypePiles,
-        float patchSweepExtent,
-        float patchSweepLinkExtent)
-    {
-        var component = new HashSet<ResourcePileInstance>(ReferenceEqualityComparer<ResourcePileInstance>.Instance);
-        var frontier = new Queue<ResourcePileInstance>();
-        component.Add(firstPile);
-        frontier.Enqueue(firstPile);
-
-        while (frontier.Count > 0)
-        {
-            var current = frontier.Dequeue();
-            foreach (var candidate in sameTypePiles)
-            {
-                if (component.Contains(candidate) ||
-                    candidate.HasDisposed ||
-                    Vector3.Distance(firstPile.GetPosition(), candidate.GetPosition()) > patchSweepExtent ||
-                    Vector3.Distance(current.GetPosition(), candidate.GetPosition()) > patchSweepLinkExtent)
-                {
-                    continue;
-                }
-
-                component.Add(candidate);
-                frontier.Enqueue(candidate);
-            }
-        }
-
-        return component;
-    }
-
     private static bool IsNearSourcePatch(
         IReadOnlyCollection<ResourcePileInstance> sourcePatchPiles,
         ResourcePileInstance candidatePile,
         float mixedGroundHarvestExtent)
     {
-        return HaulGeometry.GetNearestPatchDistance(
-            sourcePatchPiles.Select(pile => pile.GetPosition()),
-            candidatePile.GetPosition()) <= mixedGroundHarvestExtent;
+        return StockpilePileTopology.GetNearestPatchDistance(sourcePatchPiles, candidatePile) <= mixedGroundHarvestExtent;
     }
 
     private static float GetNominalPileWeight(ResourceInstance resource)

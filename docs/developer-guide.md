@@ -39,6 +39,25 @@ Worker tick
 The important change is that hauling is no longer mostly "whatever this worker sees right now".
 It becomes "the board assigns a shared task, then the worker executes it".
 
+## Provenance model
+
+Stockpile hauling is reasoned about in three provenance categories:
+
+- `PlayerForced`
+  - comes from an explicit player order
+  - first pickup anchor is preserved
+  - optional local smart extension can add nearby worthwhile pickups, including mixed loads when that helps fill remaining carry capacity
+- `LocalCleanup`
+  - recent goal was a local producer/gatherer style goal
+  - source is still near the worker
+  - treated as a separate context from general autonomous hauling
+- `AutonomousHaul`
+  - the remaining general hauling cases
+  - this is the main smart-takeover category
+
+This distinction matters more than the raw goal type name.
+The same `StockpileHaulingGoal` can come from very different gameplay intents.
+
 ## Where to read the code
 
 1. Plugin bootstrap: [SmartHaulingPlugin.cs](../runtime/SmartHauling.Runtime/SmartHaulingPlugin.cs)
@@ -74,3 +93,8 @@ The current refactor direction is:
 - planners own planning logic
 - execution classes own action sequencing
 - coordination classes own leases and shared task state
+
+Recent cleanup in this area:
+- shared hauling policy constants moved into one place
+- goal state/snapshot/finalization moved out of the main stockpile patch
+- recent-goal classification is captured at goal end and reused later instead of being recomputed from strings in the classifier
