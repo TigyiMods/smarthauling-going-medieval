@@ -34,6 +34,30 @@ SmartHauling changes hauling from mostly local worker decisions to centrally pla
 - pickup tries to fill remaining carry capacity
 - drop tries to empty the carry before new pickup work starts
 
+## Intent Rules
+
+SmartHauling does not treat every stockpile haul the same way.
+
+- `PlayerForced`
+  - right-click `Prioritize hauling to stockpile`
+  - keeps the selected item as the first pickup anchor
+  - may extend the haul with nearby worthwhile pickups if there is room, including mixed loads when that helps fill remaining carry capacity
+  - avoids large retargets away from the chosen local area
+- `LocalCleanup`
+  - short follow-up cleanup after nearby production or gathering work
+  - tracked separately from general autonomous hauling so immediate cleanup can be reasoned about differently
+- `AutonomousHaul`
+  - general stockpile hauling not tied to a forced player order or immediate local cleanup
+  - this is the main path where the smart planner takes over
+
+## Smart Unloading
+
+`Smart unloading` is the safe unload phase after a worker is already carrying items.
+
+- it does not mean "go find more items"
+- it means "finish storing what is already in the worker's inventory"
+- the goal is to avoid bad carry cleanup and reduce cases where items are dropped or left half-finished
+
 ## Install
 
 1. Install BepInEx 5 into the game directory.

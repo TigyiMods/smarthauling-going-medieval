@@ -19,9 +19,6 @@ internal static class ResourceActionPatch
     private static readonly AccessTools.FieldRef<HaulingBaseGoal, int> PickedCountRef =
         AccessTools.FieldRefAccess<HaulingBaseGoal, int>("PickedCount");
 
-    private static readonly System.Reflection.MethodInfo ClearTargetsQueueMethod =
-        AccessTools.Method(typeof(Goal), "ClearTargetsQueue", new[] { typeof(TargetIndex) })!;
-
     [HarmonyPatch(
         typeof(ResourceActions),
         nameof(ResourceActions.PickupResourceFromPile),
@@ -187,7 +184,7 @@ internal static class ResourceActionPatch
 
     private static void ClearTargetsQueue(Goal goal, TargetIndex index)
     {
-        ClearTargetsQueueMethod.Invoke(goal, new object[] { index });
+        GoalTargetQueueAccess.ClearTargetsQueue(goal, index);
     }
 
     [HarmonyPatch(typeof(ResourceActions), nameof(ResourceActions.DeliverProductionResource))]

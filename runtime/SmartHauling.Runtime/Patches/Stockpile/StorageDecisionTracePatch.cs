@@ -19,12 +19,6 @@ internal static class StorageDecisionTracePatch
     private static readonly System.Reflection.FieldInfo ActionsField =
         AccessTools.Field(typeof(Goal), "actions")!;
 
-    private static readonly System.Reflection.MethodInfo ClearTargetsQueueMethod =
-        AccessTools.Method(typeof(Goal), "ClearTargetsQueue", new[] { typeof(TargetIndex) })!;
-
-    private static readonly System.Reflection.MethodInfo QueueTargetMethod =
-        AccessTools.Method(typeof(Goal), "QueueTarget", new[] { typeof(TargetIndex), typeof(TargetObject) })!;
-
     private static readonly System.Reflection.MethodInfo JumpToActionMethod =
         AccessTools.Method(typeof(Goal), "JumpToAction", new[] { typeof(GoapAction) })!;
 
@@ -410,12 +404,12 @@ internal static class StorageDecisionTracePatch
 
     private static void ClearTargetsQueue(Goal goal, TargetIndex index)
     {
-        ClearTargetsQueueMethod.Invoke(goal, new object[] { index });
+        GoalTargetQueueAccess.ClearTargetsQueue(goal, index);
     }
 
     private static void QueueTarget(Goal goal, TargetIndex index, TargetObject target)
     {
-        QueueTargetMethod.Invoke(goal, new object[] { index, target });
+        GoalTargetQueueAccess.QueueTarget(goal, index, target);
     }
 
     private static void JumpToAction(Goal goal, GoapAction action)

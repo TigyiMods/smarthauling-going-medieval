@@ -129,3 +129,18 @@ Goal.Tick / Goal.EndGoalWith / WorkerGoapAgent.OnGoalEnded / CreatureBase.DropSt
 vanilla: worker-local goal + stockpile-local target finding + vanilla executor
 smart:   worker trigger assist + central task board + custom executor
 ```
+
+## Provenance categories
+
+SmartHauling now treats stockpile hauling by origin, not just by goal type:
+
+- `PlayerForced`
+  - explicit player order
+  - keep the selected item as the anchor pickup
+  - optionally extend locally to use remaining carry capacity, including mixed loads when worthwhile
+- `LocalCleanup`
+  - immediate nearby cleanup after production/gathering style goals
+  - treated as a separate context from general free-form hauling
+- `AutonomousHaul`
+  - normal free-form hauling
+  - eligible for smart takeover

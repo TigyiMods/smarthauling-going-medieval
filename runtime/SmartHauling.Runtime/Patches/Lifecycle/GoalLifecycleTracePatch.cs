@@ -2,6 +2,7 @@ using HarmonyLib;
 using NSMedieval.Goap;
 using NSMedieval.Goap.Goals;
 using NSMedieval.State;
+using SmartHauling.Runtime.Composition;
 namespace SmartHauling.Runtime.Patches;
 
 [HarmonyPatch]
@@ -23,7 +24,30 @@ internal static class GoalLifecycleTracePatch
             return;
         }
 
-        DiagnosticTrace.Info("goal.start", $"{__instance.GetType().Name} started for {__instance.AgentOwner}", 40);
+        if (__instance is StockpileHaulingGoal haulingGoal)
+        {
+            var carryCount = __instance.AgentOwner is IStorageAgent { Storage: not null } storageAgent
+                ? storageAgent.Storage.GetTotalStoredCount()
+                : 0;
+            var carrySummary = __instance.AgentOwner is IStorageAgent { Storage: not null } summaryAgent
+                ? CarrySummaryUtil.Summarize(summaryAgent.Storage)
+                : "<no-storage>";
+            var recent = __instance.AgentOwner is CreatureBase creature &&
+                         RecentGoalOriginStore.TryGetRecent(creature, out var context)
+                ? $"{context.GoalType}/{context.Condition} action={context.ActionId} age={(RuntimeServices.Clock.RealtimeSinceStartup - context.EndedAt):0.00}s carry={context.CarryCount} [{context.CarrySummary}]"
+                : "<none>";
+            var playerForced = __instance.AgentOwner is CreatureBase forcedCreature &&
+                               PlayerForcedHaulIntentStore.TryPeek(forcedCreature, out var pendingIntent)
+                ? $"{pendingIntent.AnchorBlueprintId} age={(RuntimeServices.Clock.RealtimeSinceStartup - pendingIntent.MarkedAt):0.00}s"
+                : "<none>";
+            DiagnosticTrace.Info(
+                "goal.start",
+                $"{haulingGoal.GetType().Name} started for {__instance.AgentOwner}: carry={carryCount}, carried=[{carrySummary}], recent={recent}, playerForced={playerForced}",
+                200);
+            return;
+        }
+
+        DiagnosticTrace.Info("goal.start", $"{__instance.GetType().Name} started for {__instance.AgentOwner}", 80);
     }
 
     [HarmonyPatch(typeof(Goal), nameof(Goal.EndGoalWith))]
@@ -49,6 +73,11 @@ internal static class GoalLifecycleTracePatch
         if (__instance is StockpileHaulingGoal)
         {
             ClusterOwnershipStore.ReleaseGoal(__instance);
+        }
+
+        if (__instance.AgentOwner is CreatureBase creature)
+        {
+            RecentGoalOriginStore.RecordGoalEnd(creature, __instance, condition);
         }
 
         if (!IsRelevant(__instance))
@@ -129,3 +158,4 @@ internal static class GoalLifecycleTracePatch
         }
     }
 }
+

@@ -32,11 +32,28 @@ internal static class SmartStatusText
                 return translatedText;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            DiagnosticTrace.Error("loc.error", $"ResolveDisplayText failed for '{text}': {ex.GetType().Name}: {ex.Message}");
         }
 
         return text;
+    }
+
+    public static string NormalizeGoalDisplayText(string text, string fallbackTerm, string fallbackText)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return text;
+        }
+
+        var resolved = ResolveDisplayText(text);
+        if (LooksLikePlaceholderKey(resolved))
+        {
+            return ResolveLocalizedFallback(fallbackTerm, fallbackText);
+        }
+
+        return resolved;
     }
 
     public static string AppendSmartSuffix(string text)
@@ -68,8 +85,9 @@ internal static class SmartStatusText
                 return translatedText;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            DiagnosticTrace.Error("loc.error", $"ResolveLocalizedFallback failed for '{termName}': {ex.GetType().Name}: {ex.Message}");
         }
 
         return fallbackText;

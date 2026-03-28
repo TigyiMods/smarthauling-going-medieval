@@ -10,7 +10,9 @@ internal static class CoordinatedStockpileExecutorPatch
     [HarmonyPostfix]
     private static void Postfix(HaulingBaseGoal __instance, ref IEnumerable<GoapAction> __result)
     {
-        if (!RuntimeActivation.IsActive || __instance is not StockpileHaulingGoal stockpileGoal)
+        if (!RuntimeActivation.IsActive ||
+            __instance is not StockpileHaulingGoal stockpileGoal ||
+            !CoordinatedStockpileTaskStore.TryGet(stockpileGoal, out _))
         {
             return;
         }

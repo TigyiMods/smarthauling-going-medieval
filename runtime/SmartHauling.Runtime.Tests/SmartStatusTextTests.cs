@@ -103,4 +103,17 @@ public sealed class SmartStatusTextTests
         // Assert
         Assert.True(result);
     }
+
+    [Fact]
+    public void NormalizeGoalDisplayText_UsesFallback_WhenPlaceholderKeyLeaks()
+    {
+        // Act
+        var result = SmartStatusText.NormalizeGoalDisplayText(
+            "worker_action_smartunloadgoal",
+            SmartHaulingLocalization.SmartUnloadGoalNameTerm,
+            SmartHaulingLocalization.DefaultSmartUnloadGoalName);
+
+        // Assert
+        Assert.Equal("Unloading", result);
+    }
 }

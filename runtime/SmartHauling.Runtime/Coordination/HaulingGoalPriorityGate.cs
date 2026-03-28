@@ -7,7 +7,8 @@ namespace SmartHauling.Runtime;
 /// </summary>
 internal static class HaulingGoalPriorityGate
 {
-    private const float HighestPriorityValue = 1f;
+    private const float DisabledPriorityThreshold = float.MaxValue / 8f;
+    private const float PriorityEqualityEpsilon = 0.0001f;
 
     private static readonly JobType[] CompetingJobs = BuildCompetingJobs();
 
@@ -20,7 +21,7 @@ internal static class HaulingGoalPriorityGate
         blockingPriority = float.MaxValue;
 
         var haulingPriority = getJobPriority(JobType.Hauling);
-        if (haulingPriority != HighestPriorityValue)
+        if (!IsUsablePriority(haulingPriority))
         {
             return false;
         }
@@ -28,7 +29,7 @@ internal static class HaulingGoalPriorityGate
         foreach (var job in CompetingJobs)
         {
             var priority = getJobPriority(job);
-            if (float.IsNaN(priority) || priority > haulingPriority)
+            if (!IsUsablePriority(priority) || priority > haulingPriority + PriorityEqualityEpsilon)
             {
                 continue;
             }
@@ -39,6 +40,13 @@ internal static class HaulingGoalPriorityGate
         }
 
         return true;
+    }
+
+    private static bool IsUsablePriority(float priority)
+    {
+        return !float.IsNaN(priority) &&
+               !float.IsInfinity(priority) &&
+               priority < DisabledPriorityThreshold;
     }
 
     private static JobType[] BuildCompetingJobs()

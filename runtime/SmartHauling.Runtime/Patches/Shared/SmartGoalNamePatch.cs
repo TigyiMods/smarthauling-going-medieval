@@ -13,18 +13,40 @@ internal static class SmartGoalNamePatch
     [HarmonyLib.HarmonyPostfix]
     private static void GetLocalizedCurrentActionInfoPostfix(CreatureBase creatureBase, ref string __result)
     {
+        var goal = creatureBase?.GetGoapAgent()?.GetCurrentGoal();
         if (!RuntimeActivation.IsActive ||
             string.IsNullOrWhiteSpace(__result) ||
-            !ShouldMarkGoal(creatureBase?.GetGoapAgent()?.GetCurrentGoal()))
+            !ShouldMarkGoal(goal))
         {
             return;
         }
 
-        __result = SmartStatusText.AppendSmartSuffix(__result);
+        __result = SmartStatusText.AppendSmartSuffix(RemapGoalLabel(goal!, __result));
         DiagnosticTrace.Info(
             "goal.name",
-            $"Smart goal label remap: localized='{__result}', goal='{creatureBase?.GetGoapAgent()?.GetCurrentGoal()?.GetType().Name}'",
+            $"Smart goal label remap: localized='{__result}', goal='{goal?.GetType().Name}'",
             40);
+    }
+
+    private static string RemapGoalLabel(Goal goal, string localizedText)
+    {
+        if (goal is SmartUnloadGoal)
+        {
+            return SmartStatusText.NormalizeGoalDisplayText(
+                localizedText,
+                SmartHaulingLocalization.SmartUnloadGoalNameTerm,
+                SmartHaulingLocalization.DefaultSmartUnloadGoalName);
+        }
+
+        if (goal is StockpileHaulingGoal)
+        {
+            return SmartStatusText.NormalizeGoalDisplayText(
+                localizedText,
+                SmartHaulingLocalization.StockpileHaulingGoalNameTerm,
+                SmartHaulingLocalization.DefaultStockpileHaulingGoalName);
+        }
+
+        return SmartStatusText.ResolveDisplayText(localizedText);
     }
 
     private static bool ShouldMarkGoal(Goal? goal)

@@ -14,8 +14,9 @@ internal static class HaulingOpportunisticPatch
             return true;
         }
 
-        // Stockpile hauling is planned up-front by the hard planner.
-        // The vanilla injector rewrites queue A back toward same-type piles.
-        return __instance is not StockpileHaulingGoal;
+        // Only board-owned stockpile goals should bypass the vanilla opportunistic injector.
+        // Any other stockpile haul remains vanilla, including player-prioritized or cleanup hauls.
+        return __instance is not StockpileHaulingGoal stockpileGoal ||
+               !CoordinatedStockpileTaskStore.TryGet(stockpileGoal, out _);
     }
 }
