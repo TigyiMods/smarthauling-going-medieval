@@ -34,6 +34,16 @@ SmartHauling changes hauling from mostly local worker decisions to centrally pla
 - pickup tries to fill remaining carry capacity
 - drop tries to empty the carry before new pickup work starts
 
+## Storage Target Strategy
+
+- current strategy is `priority-first`, then route/capacity optimization inside that order
+- if higher-priority storage has space, it is filled first; overflow can spill to lower-priority storage
+- this is intentionally strict to keep stockpile priorities deterministic
+
+## Planned
+
+- configurable destination strategy toggle (`priority-first` vs `nearby-first`)
+
 ## Intent Rules
 
 SmartHauling does not treat every stockpile haul the same way.

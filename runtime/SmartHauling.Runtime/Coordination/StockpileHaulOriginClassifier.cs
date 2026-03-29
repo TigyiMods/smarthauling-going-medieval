@@ -6,10 +6,25 @@ internal static class StockpileHaulOriginClassifier
         PlayerForcedHaulIntentStore.PendingIntent? playerForcedIntent,
         bool playerForcedSourceMatches,
         float playerForcedAnchorToSourceDistance,
+        bool isUrgentPriorityHaul,
         RecentGoalOriginStore.RecentGoalEndContext? recentGoal,
         float agentToSourceDistance,
         int carryAtStart)
     {
+        if (isUrgentPriorityHaul && playerForcedIntent.HasValue)
+        {
+            var urgentReason = playerForcedSourceMatches
+                ? "urgent-priority-match"
+                : (playerForcedAnchorToSourceDistance >= 0f &&
+                   playerForcedAnchorToSourceDistance <= StockpileHaulPolicy.PlayerForcedSourceClusterExtent)
+                    ? $"urgent-local-cluster<={StockpileHaulPolicy.PlayerForcedSourceClusterExtent:0.0}"
+                    : "urgent-anchor-override";
+            return new StockpileHaulOriginClassification(
+                StockpileHaulOriginCategory.PlayerForced,
+                urgentReason,
+                recentGoal?.RecentGoalClass ?? RecentGoalClass.None);
+        }
+
         if (playerForcedIntent.HasValue &&
             (playerForcedSourceMatches ||
              (playerForcedAnchorToSourceDistance >= 0f &&
@@ -18,7 +33,7 @@ internal static class StockpileHaulOriginClassifier
             return new StockpileHaulOriginClassification(
                 StockpileHaulOriginCategory.PlayerForced,
                 playerForcedSourceMatches
-                    ? "player-forced-anchor-match"
+                    ? "player-forced-priority-match"
                     : $"player-forced-local-cluster<={StockpileHaulPolicy.PlayerForcedSourceClusterExtent:0.0}",
                 recentGoal?.RecentGoalClass ?? RecentGoalClass.None);
         }

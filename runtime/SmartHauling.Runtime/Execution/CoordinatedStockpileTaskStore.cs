@@ -10,11 +10,16 @@ namespace SmartHauling.Runtime;
 /// </summary>
 internal sealed class CoordinatedStockpileDropPlan
 {
-    public CoordinatedStockpileDropPlan(string resourceId, IReadOnlyList<IStorage> orderedStorages, int requestedAmount)
+    public CoordinatedStockpileDropPlan(
+        string resourceId,
+        IReadOnlyList<IStorage> orderedStorages,
+        int requestedAmount,
+        IReadOnlyList<StockpileStorageAllocation>? plannedAllocations = null)
     {
         ResourceId = resourceId;
         OrderedStorages = orderedStorages;
         RequestedAmount = requestedAmount;
+        PlannedAllocations = plannedAllocations ?? Array.Empty<StockpileStorageAllocation>();
     }
 
     public string ResourceId { get; }
@@ -23,15 +28,28 @@ internal sealed class CoordinatedStockpileDropPlan
 
     public int RequestedAmount { get; }
 
+    public IReadOnlyList<StockpileStorageAllocation> PlannedAllocations { get; }
+
     /// <summary>
     /// Returns currently usable storages after filtering disposed or duplicated entries.
     /// </summary>
     public IReadOnlyList<IStorage> GetActiveStorages()
     {
+        var activeAllocations = GetActiveAllocations();
+        if (activeAllocations.Count > 0)
+        {
+            return activeAllocations.Select(allocation => allocation.Storage).ToList();
+        }
+
         return OrderedStorages
             .Where(storage => storage != null && !storage.HasDisposed)
             .Distinct(ReferenceEqualityComparer<IStorage>.Instance)
             .ToList();
+    }
+
+    public IReadOnlyList<StockpileStorageAllocation> GetActiveAllocations()
+    {
+        return StorageAllocationPlanBuilder.MergeAllocations(PlannedAllocations);
     }
 }
 
@@ -55,12 +73,21 @@ internal sealed class CoordinatedStockpileTask
     {
         PickupBudget = pickupBudget;
         SourcePriority = sourcePriority;
-        PlannedPickups = plannedPickups;
         PrimaryResourceId = primaryResourceId;
         dropPlansByResourceId = dropPlans
             .Where(plan => plan != null && !string.IsNullOrWhiteSpace(plan.ResourceId))
             .ToDictionary(plan => plan.ResourceId);
-        DropOrder = BuildDropOrder(primaryResourceId, dropPlansByResourceId);
+        PlannedPickups = CoordinatedPickupRouteOrdering.OrderPlannedPickups(
+            plannedPickups,
+            BuildDropAnchorMap(dropPlansByResourceId));
+        DropOrder = CoordinatedPickupRouteOrdering.BuildDropOrder(
+            primaryResourceId,
+            PlannedPickups,
+            pile => pile.BlueprintId,
+            dropPlansByResourceId.Values
+                .OrderByDescending(plan => plan.RequestedAmount)
+                .ThenBy(plan => plan.ResourceId)
+                .Select(plan => plan.ResourceId));
     }
 
     public int PickupBudget { get; }
@@ -92,23 +119,39 @@ internal sealed class CoordinatedStockpileTask
         return false;
     }
 
-    private static IReadOnlyList<string> BuildDropOrder(
-        string primaryResourceId,
+    private static IReadOnlyDictionary<string, IReadOnlyList<UnityEngine.Vector3>> BuildDropAnchorMap(
         IReadOnlyDictionary<string, CoordinatedStockpileDropPlan> plans)
     {
-        var ordered = new List<string>();
-        if (!string.IsNullOrWhiteSpace(primaryResourceId) && plans.ContainsKey(primaryResourceId))
+        var anchors = new Dictionary<string, IReadOnlyList<UnityEngine.Vector3>>();
+        foreach (var entry in plans)
         {
-            ordered.Add(primaryResourceId);
+            var positions = entry.Value.GetActiveAllocations()
+                .Select(allocation => allocation.Storage)
+                .Concat(entry.Value.GetActiveStorages())
+                .Where(storage => storage != null && !storage.HasDisposed)
+                .Select(storage => StorageCandidatePlanner.TryGetPosition(storage))
+                .Where(position => position.HasValue)
+                .Select(position => position!.Value)
+                .Distinct()
+                .ToList();
+
+            if (positions.Count == 0)
+            {
+                var fallbackStorage = entry.Value.GetActiveStorages().FirstOrDefault();
+                var fallbackPosition = StorageCandidatePlanner.TryGetPosition(fallbackStorage);
+                if (fallbackPosition.HasValue)
+                {
+                    positions.Add(fallbackPosition.Value);
+                }
+            }
+
+            if (positions.Count > 0)
+            {
+                anchors[entry.Key] = positions;
+            }
         }
 
-        ordered.AddRange(plans.Values
-            .Where(plan => !string.Equals(plan.ResourceId, primaryResourceId))
-            .OrderByDescending(plan => plan.RequestedAmount)
-            .ThenBy(plan => plan.ResourceId)
-            .Select(plan => plan.ResourceId));
-
-        return ordered;
+        return anchors;
     }
 }
 
@@ -135,7 +178,8 @@ internal static class CoordinatedStockpileTaskStore
             .Select(plan => new CoordinatedStockpileDropPlan(
                 plan.ResourceId,
                 plan.GetActiveStorages(),
-                plan.RequestedAmount))
+                plan.RequestedAmount,
+                plan.GetActiveAllocations()))
             .Where(plan => plan.OrderedStorages.Count > 0)
             .ToList();
 

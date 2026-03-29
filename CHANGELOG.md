@@ -8,16 +8,25 @@ This file follows a lightweight Keep a Changelog style.
 
 ### Added
 
-- Provenance-aware stockpile haul routing for `PlayerForced`, `LocalCleanup`, and `AutonomousHaul` contexts.
-- Short-lived worker intent tracking for board-triggered and player-forced hauling decisions.
-- Recent-goal origin tracking and targeted tests for haul origin classification.
+- Haul-origin aware routing for `PlayerForced`, `LocalCleanup`, and `AutonomousHaul`.
+- Worker intent tracking for board-triggered and player-forced hauling takeover.
+- Broader automated test coverage for routing, recovery, and capacity logic.
 
 ### Changed
 
-- Refactored stockpile planning helpers out of the main hauling patch into dedicated policy, state, topology, sweep, mixed-source, and diagnostics components.
-- Board-owned smart executor takeover is now gated more narrowly to explicitly coordinated stockpile tasks.
-- Player-forced hauling documentation now reflects anchor-first pickup with local carry-filling extension behavior.
-- Smart hauling status text handling now normalizes leaked placeholder keys through localized fallback labels.
+- Refactored stockpile planning into clearer policy/state/topology/execution components.
+- Destination choice now follows `priority-first` ordering with capacity-aware multi-storage allocation.
+- Unload execution now supports incremental same-storage bursts and planned cross-storage spillover.
+- Pickup/unload sequencing now uses shared route optimization to reduce zig-zag paths.
+- Diagnostic tracing now defaults to opt-in and runs through batched background writing.
+
+### Fixed
+
+- Fixed pickup/drop loops caused by invalid or disposed pickup targets.
+- Fixed dismantling/production interference by tightening smart mixed-collect takeover boundaries.
+- Fixed urgent/priority hauling behavior so marked priority piles remain first-class in smart extension.
+- Fixed multiple smart-hauling stall cases with stronger recovery and watchdog diagnostics.
+- Fixed logging/performance regressions caused by synchronous high-volume trace output.
 
 ## [2.2.0] - 2026-03-24
 

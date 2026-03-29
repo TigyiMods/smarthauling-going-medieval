@@ -14,6 +14,7 @@ public sealed class HaulingGoalPriorityGateTests
         // Act
         var allowed = HaulingGoalPriorityGate.TryAllowForcedHauling(
             job => priorities[job],
+            JobType.Hauling,
             out var blockingJob,
             out var blockingPriority);
 
@@ -33,6 +34,7 @@ public sealed class HaulingGoalPriorityGateTests
         // Act
         var allowed = HaulingGoalPriorityGate.TryAllowForcedHauling(
             job => priorities[job],
+            JobType.Hauling,
             out var blockingJob,
             out var blockingPriority);
 
@@ -52,6 +54,7 @@ public sealed class HaulingGoalPriorityGateTests
         // Act
         var allowed = HaulingGoalPriorityGate.TryAllowForcedHauling(
             job => priorities[job],
+            JobType.Hauling,
             out var blockingJob,
             out var blockingPriority);
 
@@ -72,6 +75,7 @@ public sealed class HaulingGoalPriorityGateTests
         // Act
         var allowed = HaulingGoalPriorityGate.TryAllowForcedHauling(
             job => priorities[job],
+            JobType.Hauling,
             out var blockingJob,
             out var blockingPriority);
 
@@ -92,6 +96,7 @@ public sealed class HaulingGoalPriorityGateTests
         // Act
         var allowed = HaulingGoalPriorityGate.TryAllowForcedHauling(
             job => priorities[job],
+            JobType.Hauling,
             out var blockingJob,
             out var blockingPriority);
 
@@ -111,6 +116,7 @@ public sealed class HaulingGoalPriorityGateTests
         // Act
         var allowed = HaulingGoalPriorityGate.TryAllowForcedHauling(
             job => priorities[job],
+            JobType.Hauling,
             out var blockingJob,
             out var blockingPriority);
 
@@ -118,6 +124,47 @@ public sealed class HaulingGoalPriorityGateTests
         Assert.True(allowed);
         Assert.Null(blockingJob);
         Assert.Equal(float.MaxValue, blockingPriority);
+    }
+
+    [Fact]
+    public void TryAllowForcedHauling_UsesRequestedJobPriority_ForUrgentHaul()
+    {
+        // Arrange
+        var priorities = BuildPriorities(defaultPriority: float.MaxValue);
+        priorities[JobType.UrgentHaul] = 0.2f;
+        priorities[JobType.Mining] = 0.6f;
+
+        // Act
+        var allowed = HaulingGoalPriorityGate.TryAllowForcedHauling(
+            job => priorities[job],
+            JobType.UrgentHaul,
+            out var blockingJob,
+            out _);
+
+        // Assert
+        Assert.True(allowed);
+        Assert.Null(blockingJob);
+    }
+
+    [Fact]
+    public void TryAllowForcedHauling_BlocksWhenCompetingJobBeatsUrgentPriority()
+    {
+        // Arrange
+        var priorities = BuildPriorities(defaultPriority: float.MaxValue);
+        priorities[JobType.UrgentHaul] = 0.5f;
+        priorities[JobType.Mining] = 0.4f;
+
+        // Act
+        var allowed = HaulingGoalPriorityGate.TryAllowForcedHauling(
+            job => priorities[job],
+            JobType.UrgentHaul,
+            out var blockingJob,
+            out var blockingPriority);
+
+        // Assert
+        Assert.False(allowed);
+        Assert.Equal(JobType.Mining, blockingJob);
+        Assert.Equal(0.4f, blockingPriority);
     }
 
     private static Dictionary<JobType, float> BuildPriorities(float defaultPriority)

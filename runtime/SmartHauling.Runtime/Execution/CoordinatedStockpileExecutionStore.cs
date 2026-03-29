@@ -45,6 +45,8 @@ internal sealed class CoordinatedStockpileExecutionState
 
     public int ConsecutiveDropFailures { get; set; }
 
+    public int ConsecutiveInvalidPickupRecoveries { get; set; }
+
     public HashSet<string> FailedDropKeys { get; } = new();
 
     public bool DropPhaseLocked { get; set; }
@@ -111,6 +113,28 @@ internal static class CoordinatedStockpileExecutionStore
         }
 
         state.ConsecutiveDropFailures = 0;
+    }
+
+    public static int IncrementInvalidPickupRecoveries(Goal goal)
+    {
+        if (goal == null)
+        {
+            return 0;
+        }
+
+        var state = GetOrCreate(goal);
+        state.ConsecutiveInvalidPickupRecoveries++;
+        return state.ConsecutiveInvalidPickupRecoveries;
+    }
+
+    public static void ResetInvalidPickupRecoveries(Goal goal)
+    {
+        if (goal == null || !TryGet(goal, out var state))
+        {
+            return;
+        }
+
+        state.ConsecutiveInvalidPickupRecoveries = 0;
     }
 
     public static bool IsDropPhaseLocked(Goal goal)

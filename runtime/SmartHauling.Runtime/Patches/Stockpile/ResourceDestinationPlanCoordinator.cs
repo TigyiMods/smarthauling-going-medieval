@@ -262,9 +262,14 @@ internal static class ResourceDestinationPlanCoordinator
         var requestedByPrimary = new Dictionary<string, int> { [primaryResourceId] = plannedAmount };
         TrimPlannedPilesToRequestedAmounts(goal, queue, plannedPiles, requestedByResourceId, plannedAmountsByPile, requestedByPrimary);
 
+        var plannedAllocations = StorageAllocationPlanBuilder.BuildFromCandidates(candidatePlan.Candidates, plannedAmount);
         var resourcePlans = new[]
         {
-            new StockpileDestinationResourcePlan(primaryResourceId, candidatePlan.OrderedStorages, plannedAmount)
+            new StockpileDestinationResourcePlan(
+                primaryResourceId,
+                candidatePlan.OrderedStorages,
+                plannedAmount,
+                plannedAllocations)
         };
         StockpileDestinationPlanStore.Set(goal, primaryResourceId, resourcePlans);
         clearTargetsQueue(goal, TargetIndex.B);

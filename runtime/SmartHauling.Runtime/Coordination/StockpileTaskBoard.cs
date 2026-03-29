@@ -23,6 +23,7 @@ internal static class StockpileTaskBoard
 
     private static readonly object SyncRoot = new();
     private static readonly List<StockpileTaskLease> ActiveLeases = new();
+    private static readonly List<ResourcePileInstance> PendingUrgentPiles = new();
     private static readonly Dictionary<ResourcePileInstance, StockpileTaskSeed> PendingTasks =
         new(ReferenceEqualityComparer<ResourcePileInstance>.Instance);
     private static readonly Dictionary<ResourcePileInstance, float> FailedUntil =
@@ -78,7 +79,7 @@ internal static class StockpileTaskBoard
             MarkAssignmentsDirty();
             DiagnosticTrace.Info(
                 "haul.plan",
-                $"Board assigned task {best.FirstPile.BlueprintId} to {creature}: taskScore={best.Score:0.0}, claimScore={HaulingDecisionTracePatch.GetBoardClaimScore(creature, best):0.0}",
+                () => $"Board assigned task {best.FirstPile.BlueprintId} to {creature}: taskScore={best.Score:0.0}, claimScore={HaulingDecisionTracePatch.GetBoardClaimScore(creature, best):0.0}",
                 80);
             selected = best;
             return true;
@@ -132,6 +133,26 @@ internal static class StockpileTaskBoard
             {
                 probeGoal.Dispose();
             }
+        }
+    }
+
+    public static bool HasPendingUrgentTask()
+    {
+        lock (SyncRoot)
+        {
+            Cleanup();
+            EnsureSnapshot();
+            return PendingUrgentPiles.Count > 0;
+        }
+    }
+
+    public static IReadOnlyList<ResourcePileInstance> GetPendingUrgentPilesSnapshot()
+    {
+        lock (SyncRoot)
+        {
+            Cleanup();
+            EnsureSnapshot();
+            return PendingUrgentPiles.ToArray();
         }
     }
 
@@ -254,6 +275,10 @@ internal static class StockpileTaskBoard
             {
                 PendingTasks.Remove(pile);
             }
+            if (releasedPiles.Count > 0)
+            {
+                RebuildPendingUrgentSnapshot();
+            }
             if (releasedPiles.Count > 0 || releasedOwners.Count > 0)
             {
                 MarkAssignmentsDirty();
@@ -274,6 +299,7 @@ internal static class StockpileTaskBoard
             Cleanup();
             ActiveLeases.RemoveAll(lease => ReferenceEquals(lease.FirstPile, pile));
             PendingTasks.Remove(pile);
+            RebuildPendingUrgentSnapshot();
             var impactedOwners = PendingAssignments
                 .Where(entry => ReferenceEquals(entry.Value?.FirstPile, pile))
                 .Select(entry => entry.Key)
@@ -329,11 +355,12 @@ internal static class StockpileTaskBoard
             PendingTasks[candidate.FirstPile] = candidate;
         }
 
+        RebuildPendingUrgentSnapshot();
         SnapshotExpiresAt = now + TaskSnapshotLifetimeSeconds;
         MarkAssignmentsDirty();
         DiagnosticTrace.Info(
             "haul.plan",
-            $"Board snapshot refreshed: tasks={PendingTasks.Count}, top=[{HaulingDecisionTracePatch.DescribeTaskSeeds(PendingTasks.Values)}]",
+            () => $"Board snapshot refreshed: tasks={PendingTasks.Count}, top=[{HaulingDecisionTracePatch.DescribeTaskSeeds(PendingTasks.Values)}]",
             40);
     }
 
@@ -355,7 +382,7 @@ internal static class StockpileTaskBoard
 
         DiagnosticTrace.Info(
             "haul.plan",
-            $"Board assignments rebuilt: assigned={PendingAssignments.Count}, seeds={PendingTasks.Count}",
+            () => $"Board assignments rebuilt: assigned={PendingAssignments.Count}, seeds={PendingTasks.Count}",
             40);
     }
 
@@ -391,6 +418,10 @@ internal static class StockpileTaskBoard
         {
             PendingTasks.Remove(pile);
             hadChanges = true;
+        }
+        if (expiredTasks.Count > 0)
+        {
+            RebuildPendingUrgentSnapshot();
         }
 
         var expiredAssignments = PendingAssignments
@@ -441,6 +472,26 @@ internal static class StockpileTaskBoard
         assignmentsDirty = true;
         assignmentStateVersion++;
         CachedAvailabilityByWorker.Clear();
+    }
+
+    private static void RebuildPendingUrgentSnapshot()
+    {
+        PendingUrgentPiles.Clear();
+        foreach (var pile in PendingTasks.Values
+                     .SelectMany(seed => seed.SourcePatchPiles)
+                     .Where(IsPendingUrgentPile)
+                     .Distinct(ReferenceEqualityComparer<ResourcePileInstance>.Instance))
+        {
+            PendingUrgentPiles.Add(pile);
+        }
+    }
+
+    private static bool IsPendingUrgentPile(ResourcePileInstance? pile)
+    {
+        return pile != null &&
+               !pile.HasDisposed &&
+               pile.IsUrgentHaul &&
+               pile.OwnedByPlayer();
     }
 
 }

@@ -20,6 +20,7 @@ namespace SmartHauling.Runtime;
 internal static class CoordinatedStockpileExecutor
 {
     private const int MaxDropRetries = 3;
+    private const int MaxConsecutiveInvalidPickupRecoveriesBeforeDrop = 3;
 
     private static readonly AccessTools.FieldRef<HaulingBaseGoal, int> MaxCarryAmountRef =
         AccessTools.FieldRefAccess<HaulingBaseGoal, int>("MaxCaryAmount");
@@ -75,6 +76,7 @@ internal static class CoordinatedStockpileExecutor
             if (carry <= 0)
             {
                 CoordinatedStockpileExecutionStore.ResetDropPhase(goal);
+                CoordinatedStockpileExecutionStore.ResetInvalidPickupRecoveries(goal);
             }
 
             if (carry > 0 && CoordinatedStockpileExecutionStore.IsDropPhaseLocked(goal))
@@ -87,8 +89,21 @@ internal static class CoordinatedStockpileExecutor
                 return;
             }
 
-            if (carry > 0 && (pickupQueueCount == 0 || !canTakeNextPickup) &&
+            if (carry > 0 &&
+                (pickupQueueCount == 0 || !canTakeNextPickup) &&
                 RemainingCapacityFillPlanner.TryAppend(goal, creature, storageAgent.Storage, pickupQueueCount > 0))
+            {
+                pickupQueue = goal.GetTargetQueue(TargetIndex.A);
+                pickupQueueCount = pickupQueue.Count;
+                nextPickupPile = pickupQueueCount > 0 ? pickupQueue[0].GetObjectAs<ResourcePileInstance>() : null;
+                nextPickup = nextPickupPile?.BlueprintId ?? "<none>";
+                canTakeNextPickup = CanTakeAdditionalPickup(storageAgent.Storage, nextPickupPile);
+            }
+
+            if (carry > 0 &&
+                pickupQueueCount > 0 &&
+                !canTakeNextPickup &&
+                TryPromoteCompatiblePickupTarget(goal, storageAgent.Storage))
             {
                 pickupQueue = goal.GetTargetQueue(TargetIndex.A);
                 pickupQueueCount = pickupQueue.Count;
@@ -153,20 +168,68 @@ internal static class CoordinatedStockpileExecutor
 
         dropInvalidPickup.OnInit = delegate
         {
+            var carry = (goal.AgentOwner as IStorageAgent)?.Storage?.GetTotalStoredCount() ?? 0;
+            var invalidAttempts = CoordinatedStockpileExecutionStore.IncrementInvalidPickupRecoveries(goal);
             var invalidReason = HaulSourcePolicy.DescribeInvalidPickupReason(
                 goal,
                 goal.GetTarget(TargetIndex.A).GetObjectAs<ResourcePileInstance>());
             var invalidPile = goal.GetTarget(TargetIndex.A).GetObjectAs<ResourcePileInstance>();
             DiagnosticTrace.Info(
                 "coord.exec",
-                $"Dropping invalid pickup for {goal.AgentOwner}: current={invalidPile?.BlueprintId ?? "<none>"}, queue={goal.GetTargetQueue(TargetIndex.A).Count}, reason={invalidReason}",
+                $"Dropping invalid pickup for {goal.AgentOwner}: current={invalidPile?.BlueprintId ?? "<none>"}, queue={goal.GetTargetQueue(TargetIndex.A).Count}, reason={invalidReason}, attempts={invalidAttempts}, carry={carry}",
                 120);
             if (invalidPile != null && invalidReason == "validate")
             {
                 HaulFailureBackoffStore.MarkFailed(new[] { invalidPile });
                 StockpileTaskBoard.MarkFailed(invalidPile);
             }
-            DropCurrentPickupTarget(goal);
+            var didRecoverTarget = TryDropInvalidPickupTarget(goal);
+            if (goal is StockpileHaulingGoal stockpileGoal &&
+                goal.AgentOwner is CreatureBase creature &&
+                goal.AgentOwner is IStorageAgent { Storage: not null } storageAgent)
+            {
+                var removedQueued = PruneAndDeduplicatePickupQueue(stockpileGoal, storageAgent.Storage);
+                if (removedQueued > 0)
+                {
+                    DiagnosticTrace.Info(
+                        "coord.exec",
+                        $"Pruned pickup queue after invalid target for {goal.AgentOwner}: removed={removedQueued}, queue={goal.GetTargetQueue(TargetIndex.A).Count}, reason={invalidReason}",
+                        120);
+                }
+
+                if (invalidReason == "disposed" &&
+                    TryReplanDisposedPickup(stockpileGoal, creature, storageAgent.Storage, out var replannedQueue, out var appended))
+                {
+                    CoordinatedStockpileExecutionStore.ResetInvalidPickupRecoveries(goal);
+                    DiagnosticTrace.Info(
+                        "coord.exec",
+                        $"Replanned after disposed pickup for {goal.AgentOwner}: queue={replannedQueue}, appended={appended}, carry={carry}",
+                        120);
+                    JumpToAction(goal, decide);
+                    return;
+                }
+            }
+
+            if (!didRecoverTarget)
+            {
+                DiagnosticTrace.Info(
+                    "coord.exec",
+                    $"Unable to recover invalid pickup for {goal.AgentOwner}: queue={goal.GetTargetQueue(TargetIndex.A).Count}, reason={invalidReason}",
+                    80);
+                goal.EndGoalWith(GoalCondition.Incompletable);
+                return;
+            }
+
+            if (carry > 0 && invalidAttempts >= MaxConsecutiveInvalidPickupRecoveriesBeforeDrop)
+            {
+                DiagnosticTrace.Info(
+                    "coord.exec",
+                    $"Forced drop phase for {goal.AgentOwner} after repeated invalid pickups: attempts={invalidAttempts}, carry={carry}",
+                    120);
+                JumpToAction(goal, prepareDrop);
+                return;
+            }
+
             JumpToAction(goal, decide);
         };
 
@@ -174,6 +237,7 @@ internal static class CoordinatedStockpileExecutor
         {
             if (status == ActionCompletionStatus.Success)
             {
+                CoordinatedStockpileExecutionStore.ResetInvalidPickupRecoveries(goal);
                 RemainingCapacityFillPlanner.RememberCurrentPickupAnchor(goal);
                 CompleteCurrentPickupTarget(goal);
                 if (goal.AgentOwner is IStorageAgent { Storage: not null } storageAgent)
@@ -327,6 +391,13 @@ internal static class CoordinatedStockpileExecutor
             return false;
         }
 
+        if (goal is not StockpileHaulingGoal stockpileGoal ||
+            !HaulSourcePolicy.ValidatePile(stockpileGoal, pile) ||
+            !HaulSourcePolicy.CanReachPile(stockpileGoal, pile))
+        {
+            return false;
+        }
+
         ForceTarget(goal, TargetIndex.A, nextTarget);
         return true;
     }
@@ -351,21 +422,153 @@ internal static class CoordinatedStockpileExecutor
             storage.HasOneOrMoreResources()) > 0;
     }
 
+    private static bool TryPromoteCompatiblePickupTarget(Goal goal, Storage storage)
+    {
+        var queue = goal.GetTargetQueue(TargetIndex.A);
+        for (var index = 0; index < queue.Count; index++)
+        {
+            var target = queue[index];
+            var pile = target.GetObjectAs<ResourcePileInstance>();
+            if (pile == null || pile.HasDisposed)
+            {
+                queue.RemoveAt(index);
+                ReleasePickupReservation(goal, target);
+                index--;
+                continue;
+            }
+
+            if (!CanTakeAdditionalPickup(storage, pile))
+            {
+                continue;
+            }
+
+            if (index > 0)
+            {
+                queue.RemoveAt(index);
+                queue.Insert(0, target);
+                DiagnosticTrace.Info(
+                    "coord.exec",
+                    $"Promoted compatible pickup for {goal.AgentOwner}: resource={pile.BlueprintId}, fromIndex={index}, queue={queue.Count}",
+                    120);
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     private static void ForceTarget(Goal goal, TargetIndex index, TargetObject target)
     {
         ForceTargetMethod.Invoke(goal, new object[] { index, target });
     }
 
-    private static void DropCurrentPickupTarget(Goal goal)
+    private static bool TryDropInvalidPickupTarget(Goal goal)
     {
         var currentTarget = goal.GetTarget(TargetIndex.A);
-        if (!currentTarget.IsInitialized)
+        var queue = goal.GetTargetQueue(TargetIndex.A);
+        var queuedPiles = queue
+            .Select(target => target.GetObjectAs<ResourcePileInstance>())
+            .ToList();
+        var recoveryPlan = InvalidPickupRecovery.CreatePlan(
+            currentTarget.IsInitialized,
+            currentTarget.GetObjectAs<ResourcePileInstance>(),
+            queuedPiles,
+            ReferenceEqualityComparer<ResourcePileInstance>.Instance);
+        if (!recoveryPlan.HasAnyAction)
         {
-            return;
+            return false;
         }
 
-        RemoveMatchingQueuedPickup(goal, currentTarget);
-        ReleasePickupReservation(goal, currentTarget);
+        TargetObject? removedTarget = null;
+        if (recoveryPlan.HasQueueTarget && recoveryPlan.QueueIndexToDrop < queue.Count)
+        {
+            removedTarget = queue[recoveryPlan.QueueIndexToDrop];
+            queue.RemoveAt(recoveryPlan.QueueIndexToDrop);
+            ReleasePickupReservation(goal, removedTarget.Value);
+        }
+
+        if (recoveryPlan.ReleaseCurrentTarget && currentTarget.IsInitialized)
+        {
+            var currentInstance = currentTarget.ObjectInstance;
+            var removedInstance = removedTarget?.ObjectInstance;
+            if (!ReferenceEquals(currentInstance, removedInstance))
+            {
+                ReleasePickupReservation(goal, currentTarget);
+            }
+        }
+
+        return true;
+    }
+
+    private static int PruneAndDeduplicatePickupQueue(StockpileHaulingGoal goal, Storage storage)
+    {
+        if (goal == null)
+        {
+            return 0;
+        }
+
+        var removed = 0;
+        var queue = goal.GetTargetQueue(TargetIndex.A);
+        var seen = new HashSet<ResourcePileInstance>(ReferenceEqualityComparer<ResourcePileInstance>.Instance);
+        for (var index = queue.Count - 1; index >= 0; index--)
+        {
+            var target = queue[index];
+            var pile = target.GetObjectAs<ResourcePileInstance>();
+            var isInvalid = pile == null ||
+                            pile.HasDisposed ||
+                            !seen.Add(pile) ||
+                            !HaulSourcePolicy.ValidatePile(goal, pile) ||
+                            !HaulSourcePolicy.CanReachPile(goal, pile);
+            if (!isInvalid)
+            {
+                continue;
+            }
+
+            queue.RemoveAt(index);
+            ReleasePickupReservation(goal, target);
+            removed++;
+        }
+
+        return removed;
+    }
+
+    private static bool TryReplanDisposedPickup(
+        StockpileHaulingGoal goal,
+        CreatureBase creature,
+        Storage storage,
+        out int queueCount,
+        out int appended)
+    {
+        queueCount = goal.GetTargetQueue(TargetIndex.A).Count;
+        appended = 0;
+        if (storage == null || storage.GetFreeSpace() <= 0f)
+        {
+            return queueCount > 0;
+        }
+
+        var attempts = 0;
+        while (attempts < 4 && storage.GetFreeSpace() > 0f)
+        {
+            attempts++;
+            var beforeCount = goal.GetTargetQueue(TargetIndex.A).Count;
+            if (!RemainingCapacityFillPlanner.TryAppend(goal, creature, storage, beforeCount > 0))
+            {
+                break;
+            }
+
+            var afterCount = goal.GetTargetQueue(TargetIndex.A).Count;
+            if (afterCount <= beforeCount)
+            {
+                break;
+            }
+
+            appended += afterCount - beforeCount;
+            PruneAndDeduplicatePickupQueue(goal, storage);
+        }
+
+        queueCount = goal.GetTargetQueue(TargetIndex.A).Count;
+        return queueCount > 0;
     }
 
     private static void CompleteCurrentPickupTarget(Goal goal)

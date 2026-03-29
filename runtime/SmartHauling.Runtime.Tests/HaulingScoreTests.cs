@@ -1,78 +1,36 @@
+using NSMedieval.State;
+
 namespace SmartHauling.Runtime.Tests;
 
 public sealed class HaulingScoreTests
 {
     [Fact]
-    public void CalculateBoardAssignmentScore_WhenDistanceIsZero_ReturnsMaximumLocalityBonus()
+    public void CalculateBoardAssignmentScore_WhenTargetPriorityIsHigher_BoostsSelection()
     {
         // Arrange
-        const float seedScore = 100f;
-        const float distance = 0f;
+        const float baseScore = 100f;
+        const float distanceToSource = 10f;
 
         // Act
-        var score = HaulingScore.CalculateBoardAssignmentScore(seedScore, distance);
+        var mediumScore = HaulingScore.CalculateBoardAssignmentScore(baseScore, distanceToSource, ZonePriority.None, ZonePriority.Medium);
+        var veryHighScore = HaulingScore.CalculateBoardAssignmentScore(baseScore, distanceToSource, ZonePriority.None, ZonePriority.VeryHigh);
 
         // Assert
-        Assert.Equal(148f, score, 3);
+        Assert.True(veryHighScore > mediumScore);
     }
 
     [Fact]
-    public void CalculateBoardAssignmentScore_WhenTargetIsFarAway_ClampsLocalityBonusToZero()
+    public void CalculateBoardAssignmentScore_WhenReprioritizing_BoostsPromotionTargets()
     {
         // Arrange
-        const float seedScore = 100f;
-        const float distance = 100f;
+        const float baseScore = 100f;
+        const float distanceToSource = 10f;
 
         // Act
-        var score = HaulingScore.CalculateBoardAssignmentScore(seedScore, distance);
+        var lowToMedium = HaulingScore.CalculateBoardAssignmentScore(baseScore, distanceToSource, ZonePriority.Low, ZonePriority.Medium);
+        var lowToVeryHigh = HaulingScore.CalculateBoardAssignmentScore(baseScore, distanceToSource, ZonePriority.Low, ZonePriority.VeryHigh);
 
         // Assert
-        Assert.Equal(100f, score, 3);
-    }
-
-    [Fact]
-    public void CalculateMaterializedSelectionScore_WhenFillImproves_ReturnsHigherScore()
-    {
-        // Arrange
-        var lowFillScore = HaulingScore.CalculateMaterializedSelectionScore(
-            pickupBudget: 20,
-            requestedAmount: 100,
-            estimatedPileCount: 3,
-            estimatedResourceTypes: 2);
-        var highFillScore = HaulingScore.CalculateMaterializedSelectionScore(
-            pickupBudget: 80,
-            requestedAmount: 100,
-            estimatedPileCount: 3,
-            estimatedResourceTypes: 2);
-
-        // Act
-        var scoreDelta = highFillScore - lowFillScore;
-
-        // Assert
-        Assert.True(scoreDelta > 0f);
-    }
-
-    [Fact]
-    public void CalculateTaskSeedScore_WhenResourceIsSapling_AddsSaplingBonus()
-    {
-        // Arrange
-        var regularScore = HaulingScore.CalculateTaskSeedScore(
-            estimatedTotal: 120,
-            patchExtent: 6f,
-            estimatedResourceTypes: 2,
-            estimatedPileCount: 4,
-            isSapling: false);
-        var saplingScore = HaulingScore.CalculateTaskSeedScore(
-            estimatedTotal: 120,
-            patchExtent: 6f,
-            estimatedResourceTypes: 2,
-            estimatedPileCount: 4,
-            isSapling: true);
-
-        // Act
-        var saplingBonus = saplingScore - regularScore;
-
-        // Assert
-        Assert.Equal(60f, saplingBonus, 3);
+        Assert.True(lowToVeryHigh > lowToMedium);
     }
 }

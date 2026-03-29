@@ -24,16 +24,16 @@ internal static class HaulingDecisionTracePatch
         {
             DiagnosticTrace.Info(
                 "haul.origin",
-                $"Using vanilla stockpile planner for {__instance.AgentOwner}: reason={plannerMode.Reason}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
+                () => $"Using vanilla stockpile planner for {__instance.AgentOwner}: reason={plannerMode.Reason}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
                 200);
             return true;
         }
 
         DiagnosticTrace.Info(
             "haul.origin",
-            $"Using smart stockpile planner for {__instance.AgentOwner}: reason={plannerMode.Reason}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
+            () => $"Using smart stockpile planner for {__instance.AgentOwner}: reason={plannerMode.Reason}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
             200);
-        DiagnosticTrace.Info("haul.find.start", $"Start for {__instance.AgentOwner}", 40);
+        DiagnosticTrace.Info("haul.find.start", () => $"Start for {__instance.AgentOwner}", 40);
         __result = TryBuildHardPlan(__instance);
         return false;
     }
@@ -78,39 +78,62 @@ internal static class HaulingDecisionTracePatch
             playerForcedIntent = forcedIntent;
         }
 
-        var playerForcedSourceMatches = playerForcedIntent.HasValue &&
-                                        observed.FirstPile != null &&
-                                        ReferenceEquals(playerForcedIntent.Value.AnchorPile, observed.FirstPile);
-        var playerForcedAnchorToSourceDistance = playerForcedIntent.HasValue && observed.FirstPile != null
-            ? Vector3.Distance(playerForcedIntent.Value.AnchorPosition, observed.FirstPile.GetPosition())
+        var isUrgentPriorityHaul = __instance is StockpileUrgentHaulingGoal && !playerForcedIntent.HasValue;
+        var effectivePlayerForcedIntent = ManualHaulIntentResolver.ResolveEffectiveIntent(
+            __instance,
+            creature,
+            playerForcedIntent,
+            observed.FirstPile);
+
+        var playerForcedSourceMatches = effectivePlayerForcedIntent.HasValue &&
+                                        effectivePlayerForcedIntent.Value.ContainsPriorityPile(observed.FirstPile);
+        var playerForcedAnchorToSourceDistance = effectivePlayerForcedIntent.HasValue && observed.FirstPile != null
+            ? Vector3.Distance(effectivePlayerForcedIntent.Value.AnchorPosition, observed.FirstPile.GetPosition())
             : -1f;
 
         var provenance = StockpileHaulOriginClassifier.Classify(
-            playerForcedIntent,
+            effectivePlayerForcedIntent,
             playerForcedSourceMatches,
             playerForcedAnchorToSourceDistance,
+            isUrgentPriorityHaul,
             recentGoal,
             observed.AgentToSource,
             carryAtStart);
-        if (creature != null && provenance.Category == StockpileHaulOriginCategory.PlayerForced)
+        if (creature != null &&
+            playerForcedIntent.HasValue &&
+            provenance.Category == StockpileHaulOriginCategory.PlayerForced)
         {
             PlayerForcedHaulIntentStore.Clear(creature);
         }
 
-        if (!isSmart && __result && observed.FirstPile != null)
+        var takeoverCarryDecision = SmartTakeoverCarryGuard.Evaluate(recentGoal, carryAtStart);
+
+        if (!isSmart && takeoverCarryDecision.ShouldBlock)
+        {
+            DiagnosticTrace.Info(
+                "haul.takeover",
+                () => $"Skipped smart takeover for {__instance.AgentOwner}: reason={takeoverCarryDecision.Reason}, recent={DescribeRecentGoal(creature)}",
+                120);
+        }
+        else if (!isSmart)
         {
             if (provenance.Category == StockpileHaulOriginCategory.PlayerForced)
             {
-                isSmart = TryUpgradePlayerForcedPlan(
-                    __instance,
-                    creature,
-                    observed.FirstPile,
-                    observed.FirstStorage,
-                    playerForcedIntent,
-                    ref __result,
-                    ref observed);
+                var allowUrgentAnchorOverride = isUrgentPriorityHaul && effectivePlayerForcedIntent.HasValue;
+                if ((__result && observed.FirstPile != null) || allowUrgentAnchorOverride)
+                {
+                    isSmart = TryUpgradePlayerForcedPlan(
+                        __instance,
+                        creature,
+                        observed.FirstPile,
+                        observed.FirstStorage,
+                        effectivePlayerForcedIntent,
+                        preserveVanillaAnchor: !allowUrgentAnchorOverride,
+                        ref __result,
+                        ref observed);
+                }
             }
-            else if (provenance.Category == StockpileHaulOriginCategory.AutonomousHaul)
+            else if (__result && observed.FirstPile != null && provenance.Category == StockpileHaulOriginCategory.AutonomousHaul)
             {
                 isSmart = TryUpgradeAutonomousPlan(
                     __instance,
@@ -131,14 +154,15 @@ internal static class HaulingDecisionTracePatch
 
         ApplySmartPlanGuards(__instance, ref __result, isSmart, observed);
 
+        var resultValue = __result;
         var decisionContext = HaulingDecisionTraceDiagnostics.BuildDecisionContext(__instance, observed.FirstPile, observed.FirstStorage);
         DiagnosticTrace.Info(
             "haul.classify",
-            $"category={provenance.Category}, reason={provenance.Reason}, recentClass={provenance.RecentGoalClass}, mode={(isSmart ? "smart" : "vanilla")}, owner={__instance.AgentOwner}, first={observed.ResourceSummary?.BlueprintId ?? "<none>"}:{observed.ResourceSummary?.Amount ?? 0}, a->s={(observed.AgentToSource >= 0f ? observed.AgentToSource.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) : "n/a")}, playerForced={DescribePlayerForcedIntent(playerForcedIntent, observed.FirstPile)}, recent={DescribeRecentGoal(creature)}",
+            () => $"category={provenance.Category}, reason={provenance.Reason}, recentClass={provenance.RecentGoalClass}, mode={(isSmart ? "smart" : "vanilla")}, owner={__instance.AgentOwner}, first={observed.ResourceSummary?.BlueprintId ?? "<none>"}:{observed.ResourceSummary?.Amount ?? 0}, a->s={(observed.AgentToSource >= 0f ? observed.AgentToSource.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) : "n/a")}, playerForced={ManualHaulIntentResolver.DescribeIntent(effectivePlayerForcedIntent, observed.FirstPile)}, recent={DescribeRecentGoal(creature)}",
             200);
         DiagnosticTrace.Info(
             isSmart ? "haul.find.result" : "haul.origin",
-            $"mode={(isSmart ? "smart" : "vanilla")}, result={__result}, owner={__instance.AgentOwner}, piles={observed.HaulQueue.Count}, first={observed.ResourceSummary?.BlueprintId ?? "<none>"}:{observed.ResourceSummary?.Amount ?? 0}, sourcePriority={observed.EffectiveSourcePriority}, targetPriority={observed.FirstStorage?.Priority.ToString() ?? "None"}, targeted={StockpileHaulingGoalState.GetTotalTargetedCount(__instance)}, carry={StockpileHaulingGoalState.GetMaxCarryAmount(__instance)}, storageTargets={observed.StorageQueue.Count}, {decisionContext}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
+            () => $"mode={(isSmart ? "smart" : "vanilla")}, result={resultValue}, owner={__instance.AgentOwner}, piles={observed.HaulQueue.Count}, first={observed.ResourceSummary?.BlueprintId ?? "<none>"}:{observed.ResourceSummary?.Amount ?? 0}, sourcePriority={observed.EffectiveSourcePriority}, targetPriority={observed.FirstStorage?.Priority.ToString() ?? "None"}, targeted={StockpileHaulingGoalState.GetTotalTargetedCount(__instance)}, carry={StockpileHaulingGoalState.GetMaxCarryAmount(__instance)}, storageTargets={observed.StorageQueue.Count}, {decisionContext}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
             isSmart ? 120 : 200);
     }
 
@@ -172,40 +196,55 @@ internal static class HaulingDecisionTracePatch
     private static bool TryUpgradePlayerForcedPlan(
         StockpileHaulingGoal goal,
         CreatureBase? creature,
-        ResourcePileInstance originalFirstPile,
+        ResourcePileInstance? originalFirstPile,
         IStorage? originalFirstStorage,
         PlayerForcedHaulIntentStore.PendingIntent? playerForcedIntent,
+        bool preserveVanillaAnchor,
         ref bool result,
         ref ObservedHaulPlanState observed)
     {
         var vanillaSnapshot = StockpileHaulingGoalState.CaptureVanillaPlan(goal, result);
-        if (!TryBuildPlayerForcedPlan(goal, originalFirstPile, originalFirstStorage))
+        var anchorPile = preserveVanillaAnchor
+            ? originalFirstPile
+            : playerForcedIntent?.AnchorPile ?? originalFirstPile;
+        var preferredStorage = preserveVanillaAnchor
+            ? originalFirstStorage
+            : ManualHaulIntentResolver.ResolvePreferredStorageForAnchor(creature, originalFirstStorage, anchorPile);
+        if (anchorPile == null ||
+            !TryBuildPlayerForcedPlan(goal, anchorPile, preferredStorage, playerForcedIntent))
         {
             StockpileHaulingGoalState.RestoreVanillaPlan(goal, vanillaSnapshot);
             result = vanillaSnapshot.Result;
             DiagnosticTrace.Info(
                 "haul.takeover",
-                $"Player-forced smart extension failed for {goal.AgentOwner}; restored vanilla plan {vanillaSnapshot.FirstBlueprintId}",
+                () => $"Player-forced smart extension failed for {goal.AgentOwner}; restored vanilla plan {vanillaSnapshot.FirstBlueprintId}",
                 120);
             return false;
         }
 
         var upgraded = ObservePlanState(goal, creature);
-        if (upgraded.FirstPile == null || !ReferenceEquals(upgraded.FirstPile, originalFirstPile))
+        var expectedFirstPile = preserveVanillaAnchor
+            ? originalFirstPile
+            : anchorPile;
+        var expectedBlueprintId = expectedFirstPile?.BlueprintId ?? "<none>";
+        if (expectedFirstPile == null ||
+            upgraded.FirstPile == null ||
+            !ReferenceEquals(upgraded.FirstPile, expectedFirstPile))
         {
             StockpileHaulingGoalState.RestoreVanillaPlan(goal, vanillaSnapshot);
             result = vanillaSnapshot.Result;
             DiagnosticTrace.Info(
                 "haul.takeover",
-                $"Rejected player-forced smart extension for {goal.AgentOwner}: anchor changed from {vanillaSnapshot.FirstBlueprintId} to {upgraded.FirstPile?.BlueprintId ?? "<none>"}",
+                () => $"Rejected player-forced smart extension for {goal.AgentOwner}: expected={expectedBlueprintId}, planned={upgraded.FirstPile?.BlueprintId ?? "<none>"}",
                 120);
             return false;
         }
 
         observed = upgraded;
+        var plannedFirstBlueprintId = observed.ResourceSummary?.BlueprintId ?? "<none>";
         DiagnosticTrace.Info(
             "haul.takeover",
-            $"Extended player-forced haul with local smart pickup for {goal.AgentOwner}: anchor={playerForcedIntent?.AnchorBlueprintId ?? vanillaSnapshot.FirstBlueprintId}, plannedFirst={observed.ResourceSummary?.BlueprintId ?? "<none>"}, recent={DescribeRecentGoal(creature)}",
+            () => $"Extended player-forced haul with local smart pickup for {goal.AgentOwner}: anchor={playerForcedIntent?.AnchorBlueprintId ?? vanillaSnapshot.FirstBlueprintId}, vanillaFirst={originalFirstPile?.BlueprintId ?? "<none>"}, plannedFirst={plannedFirstBlueprintId}, recent={DescribeRecentGoal(creature)}",
             120);
         return true;
     }
@@ -223,15 +262,16 @@ internal static class HaulingDecisionTracePatch
             result = vanillaSnapshot.Result;
             DiagnosticTrace.Info(
                 "haul.takeover",
-                $"Smart takeover failed for autonomous haul on {goal.AgentOwner}; restored vanilla plan {vanillaSnapshot.FirstBlueprintId}",
+                () => $"Smart takeover failed for autonomous haul on {goal.AgentOwner}; restored vanilla plan {vanillaSnapshot.FirstBlueprintId}",
                 120);
             return false;
         }
 
         observed = ObservePlanState(goal, creature);
+        var smartFirstBlueprintId = observed.ResourceSummary?.BlueprintId ?? "<none>";
         DiagnosticTrace.Info(
             "haul.takeover",
-            $"Upgraded autonomous haul to smart for {goal.AgentOwner}: vanillaFirst={vanillaSnapshot.FirstBlueprintId}, smartFirst={observed.ResourceSummary?.BlueprintId ?? "<none>"}, recent={DescribeRecentGoal(creature)}",
+            () => $"Upgraded autonomous haul to smart for {goal.AgentOwner}: vanillaFirst={vanillaSnapshot.FirstBlueprintId}, smartFirst={smartFirstBlueprintId}, recent={DescribeRecentGoal(creature)}",
             120);
         return true;
     }
@@ -254,7 +294,7 @@ internal static class HaulingDecisionTracePatch
             goal.GetTargetQueue(TargetIndex.B).Clear();
             DiagnosticTrace.Info(
                 "haul.find.result",
-                $"Rejected claimed haul for {goal.AgentOwner}: {observed.ResourceSummary?.BlueprintId ?? "<none>"}",
+                () => $"Rejected claimed haul for {goal.AgentOwner}: {observed.ResourceSummary?.BlueprintId ?? "<none>"}",
                 120);
             result = false;
             return;
@@ -267,7 +307,7 @@ internal static class HaulingDecisionTracePatch
             goal.GetTargetQueue(TargetIndex.B).Clear();
             DiagnosticTrace.Info(
                 "haul.find.result",
-                $"Rejected haul for {goal.AgentOwner}: {observed.ResourceSummary?.BlueprintId ?? "<none>"} sourcePriority={observed.EffectiveSourcePriority} targetPriority={observed.FirstStorage.Priority}",
+                () => $"Rejected haul for {goal.AgentOwner}: {observed.ResourceSummary?.BlueprintId ?? "<none>"} sourcePriority={observed.EffectiveSourcePriority} targetPriority={observed.FirstStorage.Priority}",
                 120);
             result = false;
         }
@@ -285,7 +325,7 @@ internal static class HaulingDecisionTracePatch
         var selectedPlan = SelectSeedPlan(goal, creature);
         if (selectedPlan == null)
         {
-            DiagnosticTrace.Info("haul.plan", $"Hard planner found no viable stockpile haul for {goal.AgentOwner}", 120);
+            DiagnosticTrace.Info("haul.plan", () => $"Hard planner found no viable stockpile haul for {goal.AgentOwner}", 120);
             return false;
         }
 
@@ -294,7 +334,7 @@ internal static class HaulingDecisionTracePatch
         {
             RuntimeServices.Reservations.ReleaseAll(selectedPlan.FirstPile);
             StockpileTaskBoard.MarkFailed(selectedPlan.FirstPile);
-            DiagnosticTrace.Info("haul.plan", $"Hard planner failed to reserve seed pile {selectedPlan.FirstPile.BlueprintId} for {goal.AgentOwner}", 120);
+            DiagnosticTrace.Info("haul.plan", () => $"Hard planner failed to reserve seed pile {selectedPlan.FirstPile.BlueprintId} for {goal.AgentOwner}", 120);
             return false;
         }
 
@@ -307,7 +347,7 @@ internal static class HaulingDecisionTracePatch
 
         DiagnosticTrace.Info(
             "haul.plan",
-            $"Hard planner selected {selectedPlan.FirstPile.BlueprintId}: estTotal={selectedPlan.EstimatedTotal}, estResources={selectedPlan.EstimatedResourceTypes}, score={selectedPlan.Score:0.0}, storage={selectedPlan.PrimaryStorage.GetType().Name}[prio={selectedPlan.PrimaryStorage.Priority}], requested={selectedPlan.RequestedAmount}, destinationBudget={selectedPlan.DestinationBudget}, pickupBudget={selectedPlan.PickupBudget}, candidates={selectedPlan.CandidatePlan.Summarize()}",
+            () => $"Hard planner selected {selectedPlan.FirstPile.BlueprintId}: estTotal={selectedPlan.EstimatedTotal}, estResources={selectedPlan.EstimatedResourceTypes}, score={selectedPlan.Score:0.0}, storage={selectedPlan.PrimaryStorage.GetType().Name}[prio={selectedPlan.PrimaryStorage.Priority}], requested={selectedPlan.RequestedAmount}, destinationBudget={selectedPlan.DestinationBudget}, pickupBudget={selectedPlan.PickupBudget}, candidates={selectedPlan.CandidatePlan.Summarize()}",
             120);
 
         var clusterAugment = StockpileClusterAugmentor.Apply(
@@ -336,7 +376,7 @@ internal static class HaulingDecisionTracePatch
             StockpileTaskBoard.MarkFailed(selectedPlan.FirstPile);
             DiagnosticTrace.Info(
                 "haul.plan",
-                $"Hard planner failed to finalize destinations for {selectedPlan.FirstPile.BlueprintId}: {clusterAugment.DestinationOutcome.Summary}",
+                () => $"Hard planner failed to finalize destinations for {selectedPlan.FirstPile.BlueprintId}: {clusterAugment.DestinationOutcome.Summary}",
                 120);
             return false;
         }
@@ -345,14 +385,18 @@ internal static class HaulingDecisionTracePatch
         {
             DiagnosticTrace.Info(
                 "haul.plan",
-                $"Leased destination capacity for {selectedPlan.FirstPile.BlueprintId}: leased={clusterAugment.DestinationOutcome.LeasedAmount}, storages={clusterAugment.DestinationOutcome.StorageCount}, summary={clusterAugment.DestinationOutcome.Summary}",
+                () => $"Leased destination capacity for {selectedPlan.FirstPile.BlueprintId}: leased={clusterAugment.DestinationOutcome.LeasedAmount}, storages={clusterAugment.DestinationOutcome.StorageCount}, summary={clusterAugment.DestinationOutcome.Summary}",
                 80);
         }
 
         return StockpileHaulingGoalState.FinalizeAugmentedPlan(goal, selectedPlan.SourcePriority, clusterAugment);
     }
 
-    private static bool TryBuildPlayerForcedPlan(StockpileHaulingGoal goal, ResourcePileInstance anchorPile, IStorage? preferredStorage)
+    private static bool TryBuildPlayerForcedPlan(
+        StockpileHaulingGoal goal,
+        ResourcePileInstance anchorPile,
+        IStorage? preferredStorage,
+        PlayerForcedHaulIntentStore.PendingIntent? playerForcedIntent)
     {
         if (goal.AgentOwner is not CreatureBase creature || goal.AgentOwner is not IStorageAgent { Storage: not null } storageAgent)
         {
@@ -396,6 +440,7 @@ internal static class HaulingDecisionTracePatch
 
         var pickupBudget = Math.Max(1, Mathf.Min(destinationBudget, requestedAmount));
         var sourcePatchPiles = BuildPlayerForcedSourcePatch(anchorPile);
+        var prioritySeedPiles = BuildPlayerForcedPrioritySeedPiles(anchorPile, playerForcedIntent);
 
         StockpileHaulingGoalState.ResetGoalState(goal);
 
@@ -412,6 +457,26 @@ internal static class HaulingDecisionTracePatch
             primaryStorage,
             sourcePriority,
             pickupBudget);
+
+        var addedPrioritySeeds = 0;
+        foreach (var priorityPile in prioritySeedPiles.Skip(1))
+        {
+            if (!TryQueuePlayerForcedPrioritySeed(goal, creature, priorityPile))
+            {
+                continue;
+            }
+
+            StockpileHaulingGoalState.QueueTarget(goal, TargetIndex.A, new TargetObject(priorityPile));
+            addedPrioritySeeds++;
+        }
+
+        if (addedPrioritySeeds > 0)
+        {
+            DiagnosticTrace.Info(
+                "haul.takeover",
+                () => $"Queued additional player-forced priority pickups for {goal.AgentOwner}: count={addedPrioritySeeds}, anchor={anchorPile.BlueprintId}",
+                120);
+        }
 
         var clusterAugment = StockpileClusterAugmentor.Apply(
             goal,
@@ -479,20 +544,6 @@ internal static class HaulingDecisionTracePatch
 
         var age = RuntimeServices.Clock.RealtimeSinceStartup - recent.EndedAt;
         return $"{recent.GoalType}/{recent.Condition} action={recent.ActionId} age={age:0.00}s carry={recent.CarryCount} [{recent.CarrySummary}]";
-    }
-
-    private static string DescribePlayerForcedIntent(PlayerForcedHaulIntentStore.PendingIntent? intent, ResourcePileInstance? firstPile)
-    {
-        if (!intent.HasValue)
-        {
-            return "<none>";
-        }
-
-        var anchorToSource = firstPile != null
-            ? Vector3.Distance(intent.Value.AnchorPosition, firstPile.GetPosition())
-            : -1f;
-        var samePile = firstPile != null && ReferenceEquals(intent.Value.AnchorPile, firstPile);
-        return $"anchor={intent.Value.AnchorBlueprintId}, match={samePile}, anchor->source={(anchorToSource >= 0f ? anchorToSource.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) : "n/a")}";
     }
 
     private readonly struct ObservedHaulPlanState
@@ -655,7 +706,11 @@ internal static class HaulingDecisionTracePatch
     internal static float GetBoardClaimScore(CreatureBase creature, PlannedSeedSelection selection)
     {
         var distanceToSource = Vector3.Distance(creature.GetPosition(), selection.FirstPile.GetPosition());
-        return HaulingScore.CalculateBoardAssignmentScore(selection.Score, distanceToSource);
+        return HaulingScore.CalculateBoardAssignmentScore(
+            selection.Score,
+            distanceToSource,
+            selection.SourcePriority,
+            selection.PrimaryStorage.Priority);
     }
 
     private static StockpileTaskSeed? TryCreateTaskSeed(
@@ -686,6 +741,46 @@ internal static class HaulingDecisionTracePatch
             .Prepend(anchorPile)
             .Distinct(ReferenceEqualityComparer<ResourcePileInstance>.Instance)
             .ToList();
+    }
+
+    private static List<ResourcePileInstance> BuildPlayerForcedPrioritySeedPiles(
+        ResourcePileInstance anchorPile,
+        PlayerForcedHaulIntentStore.PendingIntent? playerForcedIntent)
+    {
+        var priorityPiles = playerForcedIntent.HasValue ? playerForcedIntent.Value.PriorityPiles : Array.Empty<ResourcePileInstance>();
+        return PlayerForcedPriorityPlanner.SelectLocalPrioritySeeds(
+                anchorPile,
+                priorityPiles,
+                StockpileHaulPolicy.PlayerForcedSourceClusterExtent,
+                pile => pile != null && !pile.HasDisposed,
+                pile => Vector3.Distance(anchorPile.GetPosition(), pile.GetPosition()),
+                ReferenceEqualityComparer<ResourcePileInstance>.Instance)
+            .ToList();
+    }
+
+    private static bool TryQueuePlayerForcedPrioritySeed(
+        StockpileHaulingGoal goal,
+        CreatureBase creature,
+        ResourcePileInstance pile)
+    {
+        if (pile == null ||
+            pile.HasDisposed ||
+            HaulFailureBackoffStore.IsCoolingDown(pile) ||
+            !ClusterOwnershipStore.CanUsePile(creature, pile) ||
+            !HaulSourcePolicy.CanReachPile(goal, pile) ||
+            !HaulSourcePolicy.ValidatePile(goal, pile))
+        {
+            return false;
+        }
+
+        pile.ReserveAll();
+        if (RuntimeServices.Reservations.TryReserveObject(pile, goal.AgentOwner))
+        {
+            return true;
+        }
+
+        RuntimeServices.Reservations.ReleaseAll(pile);
+        return false;
     }
 
     private static int GetOptimisticPickupBudget(StockpileHaulingGoal goal, Resource blueprint)

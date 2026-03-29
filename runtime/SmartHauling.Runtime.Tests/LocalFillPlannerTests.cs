@@ -96,4 +96,26 @@ public sealed class LocalFillPlannerTests
         // Assert
         Assert.True(scoreDelta > 0f);
     }
+
+    [Fact]
+    public void CalculateCandidateScore_WhenFarPileIsOnlyLargeByCount_PrefersVeryLocalCandidate()
+    {
+        // Arrange
+        var localScore = LocalFillPlanner.CalculateCandidateScore(
+            requestedAmount: 20,
+            distance: 1f,
+            patchDistance: 1f,
+            hasExistingDropPlan: false);
+        var farScore = LocalFillPlanner.CalculateCandidateScore(
+            requestedAmount: 98,
+            distance: 12f,
+            patchDistance: 15.5f,
+            hasExistingDropPlan: false);
+
+        // Act
+        var scoreDelta = localScore - farScore;
+
+        // Assert
+        Assert.True(scoreDelta > 0f);
+    }
 }

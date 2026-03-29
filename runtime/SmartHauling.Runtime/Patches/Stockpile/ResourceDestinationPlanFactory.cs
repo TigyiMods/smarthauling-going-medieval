@@ -2,7 +2,6 @@ using NSEipix;
 using NSMedieval;
 using NSMedieval.Goap.Goals;
 using NSMedieval.State;
-using UnityEngine;
 
 namespace SmartHauling.Runtime.Patches;
 
@@ -115,7 +114,6 @@ internal static class ResourceDestinationPlanFactory
                     adjustedCapacity,
                     candidate.Distance,
                     candidate.FitRatio,
-                    candidate.PriorityOvershoot,
                     candidate.PreferredOrderRank,
                     candidate.Position,
                     candidate.LeasedAmount + locallyReserved));
@@ -139,32 +137,30 @@ internal static class ResourceDestinationPlanFactory
                 continue;
             }
 
+            var plannedAllocations = StorageAllocationPlanBuilder.BuildFromCandidates(adjustedCandidates, plannedAmount);
+
             requestedByResource[resourceId] = plannedAmount;
-            resourcePlans.Add(new StockpileDestinationResourcePlan(resourceId, adjustedPlan.OrderedStorages, plannedAmount));
+            resourcePlans.Add(new StockpileDestinationResourcePlan(
+                resourceId,
+                adjustedPlan.OrderedStorages,
+                plannedAmount,
+                plannedAllocations));
             candidatePlans.Add(new StorageCandidatePlanner.StorageCandidatePlan(
                 adjustedCandidates,
                 adjustedPlan.SourcePriority,
                 adjustedPlan.EffectiveMinimumPriority,
                 plannedAmount));
 
-            var remaining = plannedAmount;
-            foreach (var candidate in adjustedCandidates)
+            foreach (var allocation in plannedAllocations)
             {
-                if (remaining <= 0)
-                {
-                    break;
-                }
-
-                var reservedAmount = Mathf.Min(candidate.EstimatedCapacity, remaining);
-                if (reservedAmount <= 0)
+                if (allocation.Storage == null || allocation.RequestedAmount <= 0)
                 {
                     continue;
                 }
 
-                localReservedByStorage[candidate.Storage] = localReservedByStorage.TryGetValue(candidate.Storage, out var current)
-                    ? current + reservedAmount
-                    : reservedAmount;
-                remaining -= reservedAmount;
+                localReservedByStorage[allocation.Storage] = localReservedByStorage.TryGetValue(allocation.Storage, out var current)
+                    ? current + allocation.RequestedAmount
+                    : allocation.RequestedAmount;
             }
         }
 

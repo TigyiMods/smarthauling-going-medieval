@@ -107,7 +107,7 @@ internal static class StorageDecisionTracePatch
             var queueCount = action.Goal.GetTargetQueue(outputQueue).Count;
             DiagnosticTrace.Info(
                 "haul.storage",
-                $"FindBestStorage status={status}, goal={action.Goal.GetType().Name}, owner={action.AgentOwner}, resource={singleResource?.BlueprintId ?? "<none>"}, amount={singleResource?.Amount ?? 0}, carry={storageAgent?.Storage?.GetTotalStoredCount() ?? 0}, carried=[{CarrySummaryUtil.Summarize(storageAgent?.Storage)}], queue={queueCount}, minPriority={minimumPriority}, effectiveMinPriority={effectiveMinimumPriority}, sourcePriority={sourcePriority}, targetPriority={chosenStoragePriority}, fallback={enablePriorityFallback}, source={(usedAnchorStorage ? "anchor" : usedDestinationPlan ? "plan" : "planner")}, storage={chosenStorageDescription}, candidates={candidateSummary}");
+                () => $"FindBestStorage status={status}, goal={action.Goal.GetType().Name}, owner={action.AgentOwner}, resource={singleResource?.BlueprintId ?? "<none>"}, amount={singleResource?.Amount ?? 0}, carry={storageAgent?.Storage?.GetTotalStoredCount() ?? 0}, carried=[{CarrySummaryUtil.Summarize(storageAgent?.Storage)}], queue={queueCount}, minPriority={minimumPriority}, effectiveMinPriority={effectiveMinimumPriority}, sourcePriority={sourcePriority}, targetPriority={chosenStoragePriority}, fallback={enablePriorityFallback}, source={(usedAnchorStorage ? "anchor" : usedDestinationPlan ? "plan" : "planner")}, storage={chosenStorageDescription}, candidates={candidateSummary}");
         };
         __result = action;
     }
@@ -281,7 +281,7 @@ internal static class StorageDecisionTracePatch
             var targetStorage = action.Goal.GetTarget(storageIndex).ObjectInstance;
             DiagnosticTrace.Info(
                 "haul.storage",
-                $"ReserveAndQueue status={status}, goal={action.Goal.GetType().Name}, owner={action.AgentOwner}, storage={storageDescription}, target={targetStorage?.GetType().Name ?? "<none>"}, storagesUsed={usedStorageCount}, queuedSlots={queueCount}, requestedTotal={requestedTotal}, reservedTotal={reservedTotal}, requested=[{requestedSummary}], carried=[{CarrySummaryUtil.Summarize((action.AgentOwner as IStorageAgent)?.Storage)}]");
+                () => $"ReserveAndQueue status={status}, goal={action.Goal.GetType().Name}, owner={action.AgentOwner}, storage={storageDescription}, target={targetStorage?.GetType().Name ?? "<none>"}, storagesUsed={usedStorageCount}, queuedSlots={queueCount}, requestedTotal={requestedTotal}, reservedTotal={reservedTotal}, requested=[{requestedSummary}], carried=[{CarrySummaryUtil.Summarize((action.AgentOwner as IStorageAgent)?.Storage)}]");
         };
         __result = action;
     }
@@ -384,7 +384,7 @@ internal static class StorageDecisionTracePatch
 
             DiagnosticTrace.Info(
                 "haul.store",
-                $"StoreResource status={status}, goal={action.Goal.GetType().Name}, owner={action.AgentOwner}, target={targetObject?.GetType().Name ?? "<none>"}, carryBefore={carryBefore}, carryAfter={remaining}, carriedBefore=[{carriedBeforeSummary}], carriedAfter=[{carriedAfterSummary}]");
+                () => $"StoreResource status={status}, goal={action.Goal.GetType().Name}, owner={action.AgentOwner}, target={targetObject?.GetType().Name ?? "<none>"}, carryBefore={carryBefore}, carryAfter={remaining}, carriedBefore=[{carriedBeforeSummary}], carriedAfter=[{carriedAfterSummary}]");
         };
         __result = action;
     }
@@ -439,7 +439,7 @@ internal static class StorageDecisionTracePatch
 
         DiagnosticTrace.Info(
             "haul.recover",
-            $"Recovered empty stockpile haul for {goal.AgentOwner}: queuedSources={queuedSources.Count}, retry={StorageEmptyRecoveryStore.GetRetryCount(goal)}");
+            () => $"Recovered empty stockpile haul for {goal.AgentOwner}: queuedSources={queuedSources.Count}, retry={StorageEmptyRecoveryStore.GetRetryCount(goal)}");
         JumpToAction(goal, restartAction);
         return true;
     }

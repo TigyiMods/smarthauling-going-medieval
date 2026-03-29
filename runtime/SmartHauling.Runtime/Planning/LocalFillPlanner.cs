@@ -40,10 +40,11 @@ internal static class LocalFillPlanner
         float patchDistance,
         bool hasExistingDropPlan)
     {
-        var amountScore = requestedAmount * 3f;
-        var existingPlanBonus = hasExistingDropPlan ? 20f : 0f;
-        var localPatchBonus = Mathf.Max(0f, 96f - (patchDistance * 10f));
-        var distancePenalty = distance * 2f;
+        var cappedAmount = Mathf.Min(requestedAmount, 16);
+        var amountScore = cappedAmount * 3f;
+        var existingPlanBonus = hasExistingDropPlan ? 24f : 0f;
+        var localPatchBonus = Mathf.Max(0f, 72f - (patchDistance * 12f));
+        var distancePenalty = distance * 4f;
         return amountScore + existingPlanBonus + localPatchBonus - distancePenalty;
     }
 }

@@ -6,6 +6,7 @@ using NSMedieval.Components;
 using NSMedieval.Goap;
 using NSMedieval.Goap.Goals;
 using NSMedieval.Manager;
+using NSMedieval.Model;
 using NSMedieval.State;
 using NSMedieval.Stockpiles;
 using SmartHauling.Runtime.Goals;
@@ -16,6 +17,8 @@ namespace SmartHauling.Runtime;
 
 internal static class UnloadExecutionPlanner
 {
+    private const int MaxSameStorageBurstDrops = 8;
+
     private static readonly AccessTools.FieldRef<HaulingBaseGoal, int> PickedCountRef =
         AccessTools.FieldRefAccess<HaulingBaseGoal, int>("PickedCount");
 
@@ -33,38 +36,47 @@ internal static class UnloadExecutionPlanner
 
         foreach (var candidate in BuildOrderedCarriedResources(goal, creature, storage, preferPlannedStorages))
         {
-            foreach (var storageTarget in candidate.OrderedStorages)
+            foreach (var storageTarget in candidate.OrderedTargets)
             {
-                if (storageTarget == null || storageTarget.HasDisposed)
+                if (storageTarget.Storage == null || storageTarget.Storage.HasDisposed)
                 {
                     continue;
                 }
 
-                if (!storageTarget.ReserveStorage(candidate.Resource, creature, out var storedAmount, out var position) ||
+                var requestedAmount = Math.Min(candidate.Resource.Amount, storageTarget.RequestedAmount);
+                if (requestedAmount <= 0)
+                {
+                    continue;
+                }
+
+                var requestedResource = requestedAmount >= candidate.Resource.Amount
+                    ? candidate.Resource
+                    : candidate.Resource.Clone(requestedAmount);
+                if (!storageTarget.Storage.ReserveStorage(requestedResource, creature, out var storedAmount, out var position) ||
                     storedAmount.Amount <= 0)
                 {
                     continue;
                 }
 
-                if (CoordinatedStockpileExecutionStore.HasFailedDrop(goal, candidate.Resource.BlueprintId, storageTarget, position))
+                if (CoordinatedStockpileExecutionStore.HasFailedDrop(goal, candidate.Resource.BlueprintId, storageTarget.Storage, position))
                 {
-                    storageTarget.ReleaseReservations(creature);
+                    storageTarget.Storage.ReleaseReservations(creature);
                     continue;
                 }
 
-                ForceTarget(goal, TargetIndex.B, new TargetObject(storageTarget, position));
+                ForceTarget(goal, TargetIndex.B, new TargetObject(storageTarget.Storage, position));
                 CoordinatedStockpileExecutionStore.SetActiveDrop(
                     goal,
                     new CoordinatedDropReservation(
                         candidate.Resource.BlueprintId,
                         candidate.Resource.Blueprint,
                         storedAmount.Amount,
-                        storageTarget,
+                        storageTarget.Storage,
                         position));
 
                 DiagnosticTrace.Info(
                     GetLogCategory(goal),
-                    $"Prepared drop for {goal.AgentOwner}: resource={candidate.Resource.BlueprintId}, amount={storedAmount.Amount}, storage={storageTarget.GetType().Name}[prio={storageTarget.Priority}]@{position}, source={candidate.StorageSource}",
+                    $"Prepared drop for {goal.AgentOwner}: resource={candidate.Resource.BlueprintId}, amount={storedAmount.Amount}, storage={storageTarget.Storage.GetType().Name}[prio={storageTarget.Storage.Priority}]@{position}, source={candidate.StorageSource}",
                     120);
                 return true;
             }
@@ -95,59 +107,9 @@ internal static class UnloadExecutionPlanner
         var carriedBeforeSummary = CarrySummaryUtil.Summarize(storage);
         var amountToStore = System.Math.Min(carriedResource.Amount, System.Math.Max(1, activeDrop.ReservedAmount));
         var target = goal.GetTarget(TargetIndex.B);
-        var success = false;
-        var storedAmount = 0;
-
-        if (target.ObjectInstance is StockpileInstance stockpileInstance)
+        if (!TryStoreReservation(target.ObjectInstance, creature, storage, carriedResource, activeDrop.Blueprint, activeDrop.Position, amountToStore, out var storedAmount))
         {
-            var existingPile = stockpileInstance.GetResourcePileGridPosition(activeDrop.Position);
-            if (existingPile != null && existingPile.Blueprint == activeDrop.Blueprint)
-            {
-                storedAmount = storage.TransferTo(existingPile.GetStorage(), activeDrop.Blueprint, amountToStore);
-                success = storedAmount > 0;
-            }
-            else
-            {
-                var stackingLimit = activeDrop.Blueprint?.StackingLimit ?? 0;
-                if (stackingLimit <= 0)
-                {
-                    return false;
-                }
-
-                var spawnAmount = System.Math.Min(amountToStore, stackingLimit);
-                var pileView = MonoSingleton<ResourcePileManager>.Instance.SpawnPile(
-                    carriedResource.Clone(spawnAmount),
-                    GridUtils.GetWorldPosition(activeDrop.Position));
-                if (pileView != null)
-                {
-                    MonoSingleton<ResourcePileTracker>.Instance.OnNewPileSpawnedOnStockpile(activeDrop.Blueprint, pileView.ResourcePileInstance);
-                    storage.Consume(activeDrop.Blueprint, spawnAmount);
-                    storedAmount = spawnAmount;
-                    success = true;
-                }
-            }
-        }
-        else if (target.ObjectInstance is ShelfComponentInstance shelfComponentInstance)
-        {
-            var remaining = amountToStore;
-            foreach (var shelfStorage in shelfComponentInstance.AllStorage)
-            {
-                var justStored = shelfStorage.StoreResourcePile(creature, activeDrop.Blueprint, remaining);
-                remaining -= justStored;
-                storedAmount += justStored;
-                if (remaining <= 0)
-                {
-                    break;
-                }
-            }
-
-            success = storedAmount > 0;
-        }
-
-        CoordinatedStockpileExecutionStore.ClearActiveDrop(goal, creature);
-
-        if (!success)
-        {
+            CoordinatedStockpileExecutionStore.ClearActiveDrop(goal, creature);
             CoordinatedStockpileExecutionStore.MarkFailedDrop(goal, activeDrop);
             DiagnosticTrace.Info(
                 GetLogCategory(goal),
@@ -156,6 +118,16 @@ internal static class UnloadExecutionPlanner
             return false;
         }
 
+        storedAmount += TryStoreAdditionalSameStorageDrops(
+            goal,
+            target.ObjectInstance,
+            activeDrop.Storage,
+            creature,
+            storage,
+            activeDrop.ResourceId,
+            activeDrop.Blueprint);
+        CoordinatedStockpileExecutionStore.ClearActiveDrop(goal, creature);
+
         SyncPickedCount(goal, storage);
         CoordinatedStockpileExecutionStore.ResetDropFailures(goal);
         DiagnosticTrace.Info(
@@ -163,6 +135,220 @@ internal static class UnloadExecutionPlanner
             $"Stored {activeDrop.ResourceId}:{storedAmount} for {goal.AgentOwner}, carryBefore={carryBefore}, carryAfter={storage.GetTotalStoredCount()}, carriedBefore=[{carriedBeforeSummary}], carriedAfter=[{CarrySummaryUtil.Summarize(storage)}]",
             120);
         return true;
+    }
+
+    private static int TryStoreAdditionalSameStorageDrops(
+        Goal goal,
+        object? targetObject,
+        IStorage targetStorage,
+        CreatureBase creature,
+        Storage carryStorage,
+        string resourceId,
+        Resource blueprint)
+    {
+        var totalStored = 0;
+        for (var iteration = 0; iteration < MaxSameStorageBurstDrops; iteration++)
+        {
+            var carriedResource = CarrySummaryUtil.Snapshot(carryStorage)
+                .FirstOrDefault(resource => resource.BlueprintId == resourceId);
+            if (carriedResource == null || carriedResource.HasDisposed || carriedResource.Amount <= 0)
+            {
+                break;
+            }
+
+            if (!targetStorage.ReserveStorage(carriedResource, creature, out var storedAmount, out var position) ||
+                storedAmount.Amount <= 0)
+            {
+                break;
+            }
+
+            if (!TryStoreReservation(
+                    targetObject,
+                    creature,
+                    carryStorage,
+                    carriedResource,
+                    blueprint,
+                    position,
+                    storedAmount.Amount,
+                    out var justStored))
+            {
+                targetStorage.ReleaseReservations(creature);
+                break;
+            }
+
+            totalStored += justStored;
+            if (justStored < storedAmount.Amount)
+            {
+                break;
+            }
+        }
+
+        totalStored += TryStoreAdditionalPlannedResourcesAtCurrentStorage(
+            goal,
+            targetObject,
+            targetStorage,
+            creature,
+            carryStorage,
+            resourceId,
+            blueprint);
+
+        return totalStored;
+    }
+
+    private static int TryStoreAdditionalPlannedResourcesAtCurrentStorage(
+        Goal goal,
+        object? targetObject,
+        IStorage targetStorage,
+        CreatureBase creature,
+        Storage carryStorage,
+        string activeResourceId,
+        Resource activeBlueprint)
+    {
+        var totalStored = 0;
+        const int maxIterations = 16;
+        for (var iteration = 0; iteration < maxIterations; iteration++)
+        {
+            var candidate = CarrySummaryUtil.Snapshot(carryStorage)
+                .FirstOrDefault(resource =>
+                    resource != null &&
+                    !resource.HasDisposed &&
+                    resource.Amount > 0 &&
+                    resource.Blueprint != null &&
+                    !(resource.BlueprintId == activeResourceId && resource.Blueprint == activeBlueprint) &&
+                    IsPlannedStorageForResource(goal, resource.BlueprintId, targetStorage));
+            if (candidate == null || candidate.Blueprint == null)
+            {
+                break;
+            }
+
+            if (!targetStorage.ReserveStorage(candidate, creature, out var storedAmount, out var position) ||
+                storedAmount.Amount <= 0)
+            {
+                break;
+            }
+
+            if (!TryStoreReservation(
+                    targetObject,
+                    creature,
+                    carryStorage,
+                    candidate,
+                    candidate.Blueprint,
+                    position,
+                    storedAmount.Amount,
+                    out var justStored))
+            {
+                targetStorage.ReleaseReservations(creature);
+                break;
+            }
+
+            totalStored += justStored;
+            if (justStored < storedAmount.Amount)
+            {
+                break;
+            }
+        }
+
+        if (totalStored > 0)
+        {
+            DiagnosticTrace.Info(
+                GetLogCategory(goal),
+                $"Stored additional co-located resources at current storage for {goal.AgentOwner}: amount={totalStored}, storage={targetStorage.GetType().Name}[prio={targetStorage.Priority}]",
+                120);
+        }
+
+        return totalStored;
+    }
+
+    private static bool IsPlannedStorageForResource(Goal goal, string resourceId, IStorage storage)
+    {
+        if (goal == null || storage == null || storage.HasDisposed || string.IsNullOrWhiteSpace(resourceId))
+        {
+            return false;
+        }
+
+        if (CoordinatedDropPlanLookup.TryGetPlannedAllocations(goal, resourceId, out var allocations))
+        {
+            if (allocations.Any(allocation => allocation?.Storage != null && ReferenceEquals(allocation.Storage, storage)))
+            {
+                return true;
+            }
+        }
+
+        if (CoordinatedDropPlanLookup.TryGetPlannedStorages(goal, resourceId, out var plannedStorages))
+        {
+            if (plannedStorages.Any(planned => planned != null && ReferenceEquals(planned, storage)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryStoreReservation(
+        object? targetObject,
+        CreatureBase creature,
+        Storage carryStorage,
+        ResourceInstance carriedResource,
+        Resource blueprint,
+        Vec3Int position,
+        int amountToStore,
+        out int storedAmount)
+    {
+        storedAmount = 0;
+        if (amountToStore <= 0)
+        {
+            return false;
+        }
+
+        if (targetObject is StockpileInstance stockpileInstance)
+        {
+            var existingPile = stockpileInstance.GetResourcePileGridPosition(position);
+            if (existingPile != null && existingPile.Blueprint == blueprint)
+            {
+                storedAmount = carryStorage.TransferTo(existingPile.GetStorage(), blueprint, amountToStore);
+                return storedAmount > 0;
+            }
+
+            var stackingLimit = blueprint?.StackingLimit ?? 0;
+            if (stackingLimit <= 0)
+            {
+                return false;
+            }
+
+            var spawnAmount = System.Math.Min(amountToStore, stackingLimit);
+            var pileView = MonoSingleton<ResourcePileManager>.Instance.SpawnPile(
+                carriedResource.Clone(spawnAmount),
+                GridUtils.GetWorldPosition(position));
+            if (pileView == null)
+            {
+                return false;
+            }
+
+            MonoSingleton<ResourcePileTracker>.Instance.OnNewPileSpawnedOnStockpile(blueprint, pileView.ResourcePileInstance);
+            carryStorage.Consume(blueprint, spawnAmount);
+            storedAmount = spawnAmount;
+            return true;
+        }
+
+        if (targetObject is ShelfComponentInstance shelfComponentInstance)
+        {
+            var remaining = amountToStore;
+            foreach (var shelfStorage in shelfComponentInstance.AllStorage)
+            {
+                var justStored = shelfStorage.StoreResourcePile(creature, blueprint, remaining);
+                remaining -= justStored;
+                storedAmount += justStored;
+                if (remaining <= 0)
+                {
+                    break;
+                }
+            }
+
+            return storedAmount > 0;
+        }
+
+        return false;
     }
 
     private static List<UnloadRouteCandidate> BuildOrderedCarriedResources(
@@ -179,12 +365,20 @@ internal static class UnloadExecutionPlanner
 
         var sourcePriority = ZonePriority.None;
         HaulingPriorityRules.TryGetGoalSourcePriority(goal, creature, out sourcePriority);
-        var resourcePriorityRanks = BuildResourcePriorityRanks(goal);
+        var resourcePriorityRanks = BuildResourcePriorityBands(goal);
         var candidates = new List<UnloadRouteCandidate>();
 
         foreach (var carriedResource in carried)
         {
-            if (!TryResolveOrderedStorages(goal, creature, carriedResource, sourcePriority, preferPlannedStorages, out var orderedStorages, out var sourceLabel, out var nearestDistance))
+            if (!TryResolveOrderedTargets(
+                    goal,
+                    creature,
+                    carriedResource,
+                    sourcePriority,
+                    preferPlannedStorages,
+                    out var orderedTargets,
+                    out var sourceLabel,
+                    out var nearestDistance))
             {
                 continue;
             }
@@ -192,34 +386,52 @@ internal static class UnloadExecutionPlanner
             var priorityRank = resourcePriorityRanks.TryGetValue(carriedResource.BlueprintId, out var rank)
                 ? rank
                 : int.MaxValue;
+            var targetPriority = orderedTargets.FirstOrDefault()?.Storage?.Priority ?? ZonePriority.None;
+            var anchorPosition = orderedTargets
+                .Select(target => StorageCandidatePlanner.TryGetPosition(target.Storage))
+                .FirstOrDefault(position => position.HasValue);
             candidates.Add(new UnloadRouteCandidate(
                 carriedResource,
-                orderedStorages,
+                orderedTargets,
                 sourceLabel,
                 nearestDistance,
-                priorityRank));
+                priorityRank,
+                targetPriority,
+                anchorPosition));
         }
 
-        return candidates
-            .OrderBy(candidate => candidate.NearestDistance)
-            .ThenBy(candidate => candidate.PriorityRank)
-            .ThenByDescending(candidate => candidate.Resource.Amount)
+        return UnloadRouteOrdering.OrderCandidates(
+            candidates,
+            creature.GetPosition(),
+            candidate => candidate.PriorityRank,
+            candidate => candidate.TargetPriority,
+            candidate => candidate.AnchorPosition,
+            candidate => candidate.NearestDistance,
+            candidate => candidate.Resource.Amount)
             .ToList();
     }
 
-    private static bool TryResolveOrderedStorages(
+    private static bool TryResolveOrderedTargets(
         Goal goal,
         CreatureBase creature,
         ResourceInstance resource,
         ZonePriority sourcePriority,
         bool preferPlannedStorages,
-        out IReadOnlyList<IStorage> orderedStorages,
+        out IReadOnlyList<UnloadRouteTarget> orderedTargets,
         out string sourceLabel,
         out float nearestDistance)
     {
         if (preferPlannedStorages &&
+            CoordinatedDropPlanLookup.TryGetPlannedAllocations(goal, resource.BlueprintId, out var storedAllocations) &&
+            TryUsePlannedAllocations(storedAllocations, creature, out orderedTargets, out nearestDistance))
+        {
+            sourceLabel = "plan";
+            return true;
+        }
+
+        if (preferPlannedStorages &&
             CoordinatedDropPlanLookup.TryGetPlannedStorages(goal, resource.BlueprintId, out var plannedStorages) &&
-            TryOrderStoragesByDistance(creature, plannedStorages, out orderedStorages, out nearestDistance))
+            TryUsePlannedStorages(plannedStorages, creature, out orderedTargets, out nearestDistance))
         {
             sourceLabel = "plan";
             return true;
@@ -235,22 +447,26 @@ internal static class UnloadExecutionPlanner
             resource.Amount);
         if (candidatePlan.Primary == null)
         {
-            orderedStorages = null!;
+            orderedTargets = null!;
             sourceLabel = "none";
             nearestDistance = float.MaxValue;
             return false;
         }
 
-        var orderedCandidates = candidatePlan.Candidates
-            .OrderBy(candidate => candidate.Distance)
-            .ThenBy(candidate => candidate.PreferredOrderRank)
-            .ToList();
-        orderedStorages = orderedCandidates
-            .Select(candidate => candidate.Storage)
-            .Where(storage => storage != null && !storage.HasDisposed)
-            .Distinct(ReferenceEqualityComparer<IStorage>.Instance)
-            .ToList();
-        if (orderedStorages.Count == 0)
+        var orderedCandidates = candidatePlan.Candidates.ToList();
+        var plannedAmount = candidatePlan.GetEstimatedCapacityBudget(resource.Amount);
+        var plannedAllocations = StorageAllocationPlanBuilder.BuildFromCandidates(orderedCandidates, plannedAmount);
+        orderedTargets = plannedAllocations.Count > 0
+            ? plannedAllocations
+                .Select(allocation => new UnloadRouteTarget(allocation.Storage, allocation.RequestedAmount))
+                .ToList()
+            : orderedCandidates
+                .Select(candidate => candidate.Storage)
+                .Where(storage => storage != null && !storage.HasDisposed)
+                .Distinct(ReferenceEqualityComparer<IStorage>.Instance)
+                .Select(storage => new UnloadRouteTarget(storage, int.MaxValue))
+                .ToList();
+        if (orderedTargets.Count == 0)
         {
             sourceLabel = "none";
             nearestDistance = float.MaxValue;
@@ -262,28 +478,39 @@ internal static class UnloadExecutionPlanner
         return true;
     }
 
-    private static bool TryOrderStoragesByDistance(
+    private static bool TryUsePlannedAllocations(
+        IReadOnlyList<StockpileStorageAllocation> allocations,
         CreatureBase creature,
+        out IReadOnlyList<UnloadRouteTarget> orderedTargets,
+        out float nearestDistance)
+    {
+        var ordered = StorageAllocationPlanBuilder.MergeAllocations(allocations)
+            .Select(allocation => new UnloadRouteTarget(allocation.Storage, allocation.RequestedAmount))
+            .ToList();
+
+        orderedTargets = ordered;
+        nearestDistance = ordered.Count == 0
+            ? float.MaxValue
+            : ordered.Min(target => GetDistanceToStorage(creature, target.Storage));
+        return ordered.Count > 0;
+    }
+
+    private static bool TryUsePlannedStorages(
         IReadOnlyList<IStorage> storages,
-        out IReadOnlyList<IStorage> orderedStorages,
+        CreatureBase creature,
+        out IReadOnlyList<UnloadRouteTarget> orderedTargets,
         out float nearestDistance)
     {
         var ordered = storages
             .Where(storage => storage != null && !storage.HasDisposed)
-            .Select((storage, index) => new
-            {
-                Storage = storage,
-                Index = index,
-                Distance = GetDistanceToStorage(creature, storage)
-            })
-            .OrderBy(candidate => candidate.Distance)
-            .ThenBy(candidate => candidate.Index)
-            .Select(candidate => candidate.Storage)
             .Distinct(ReferenceEqualityComparer<IStorage>.Instance)
+            .Select(storage => new UnloadRouteTarget(storage, int.MaxValue))
             .ToList();
 
-        orderedStorages = ordered;
-        nearestDistance = ordered.Count == 0 ? float.MaxValue : GetDistanceToStorage(creature, ordered[0]);
+        orderedTargets = ordered;
+        nearestDistance = ordered.Count == 0
+            ? float.MaxValue
+            : ordered.Min(target => GetDistanceToStorage(creature, target.Storage));
         return ordered.Count > 0;
     }
 
@@ -296,14 +523,18 @@ internal static class UnloadExecutionPlanner
             : float.MaxValue / 4f;
     }
 
-    private static Dictionary<string, int> BuildResourcePriorityRanks(Goal goal)
+    private static Dictionary<string, int> BuildResourcePriorityBands(Goal goal)
     {
         var ranks = new Dictionary<string, int>();
         if (CoordinatedStockpileTaskStore.TryGet(goal, out var task))
         {
             for (var index = 0; index < task.DropOrder.Count; index++)
             {
-                ranks[task.DropOrder[index]] = index;
+                var resourceId = task.DropOrder[index];
+                if (!string.IsNullOrWhiteSpace(resourceId))
+                {
+                    ranks[resourceId] = index;
+                }
             }
 
             return ranks;
@@ -315,12 +546,12 @@ internal static class UnloadExecutionPlanner
         }
 
         ranks[destinationPlan.PrimaryResourceId] = 0;
-        var nextRank = 1;
+        var rank = 1;
         foreach (var resourcePlan in destinationPlan.ResourcePlans)
         {
             if (!ranks.ContainsKey(resourcePlan.ResourceId))
             {
-                ranks[resourcePlan.ResourceId] = nextRank++;
+                ranks[resourcePlan.ResourceId] = rank++;
             }
         }
 
@@ -349,26 +580,47 @@ internal static class UnloadExecutionPlanner
     {
         public UnloadRouteCandidate(
             ResourceInstance resource,
-            IReadOnlyList<IStorage> orderedStorages,
+            IReadOnlyList<UnloadRouteTarget> orderedTargets,
             string storageSource,
             float nearestDistance,
-            int priorityRank)
+            int priorityRank,
+            ZonePriority targetPriority,
+            Vector3? anchorPosition)
         {
             Resource = resource;
-            OrderedStorages = orderedStorages;
+            OrderedTargets = orderedTargets;
             StorageSource = storageSource;
             NearestDistance = nearestDistance;
             PriorityRank = priorityRank;
+            TargetPriority = targetPriority;
+            AnchorPosition = anchorPosition;
         }
 
         public ResourceInstance Resource { get; }
 
-        public IReadOnlyList<IStorage> OrderedStorages { get; }
+        public IReadOnlyList<UnloadRouteTarget> OrderedTargets { get; }
 
         public string StorageSource { get; }
 
         public float NearestDistance { get; }
 
         public int PriorityRank { get; }
+
+        public ZonePriority TargetPriority { get; }
+
+        public Vector3? AnchorPosition { get; }
+    }
+
+    private sealed class UnloadRouteTarget
+    {
+        public UnloadRouteTarget(IStorage storage, int requestedAmount)
+        {
+            Storage = storage;
+            RequestedAmount = requestedAmount;
+        }
+
+        public IStorage Storage { get; }
+
+        public int RequestedAmount { get; }
     }
 }
