@@ -3,6 +3,7 @@ using HarmonyLib;
 using NSMedieval.Components;
 using NSMedieval.Controllers;
 using NSMedieval.Goap;
+using NSMedieval.Goap.Goals;
 using NSMedieval.State;
 using SmartHauling.Runtime.Goals;
 
@@ -54,7 +55,7 @@ internal static class SafeUnloadRedirectPatch
 
     [HarmonyPatch(typeof(WorkerGoapAgent), "OnGoalEnded")]
     [HarmonyPostfix]
-    private static void OnGoalEndedPostfix(WorkerGoapAgent __instance, Goal goal)
+    private static void OnGoalEndedPostfix(WorkerGoapAgent __instance, Goal goal, GoalCondition condition)
     {
         if (goal is SmartUnloadGoal)
         {
@@ -65,6 +66,7 @@ internal static class SafeUnloadRedirectPatch
         var context = PopContext(__instance, goal);
         if (context == null)
         {
+            TryRecoverNoDestinationCarry(__instance, goal, condition);
             return;
         }
 
@@ -238,6 +240,36 @@ internal static class SafeUnloadRedirectPatch
         }
 
         return UnloadExecutionPlanner.HasAnyUnloadDestination(goal, creature, storage, preferPlannedStorages: false);
+    }
+
+    private static void TryRecoverNoDestinationCarry(WorkerGoapAgent agent, Goal goal, GoalCondition condition)
+    {
+        if (!RuntimeActivation.IsActive ||
+            agent == null ||
+            agent.HasDisposed ||
+            LoadingController.IsSceneTransition ||
+            condition != GoalCondition.Incompletable ||
+            goal is not StockpileHaulingGoal ||
+            agent.AgentOwner is not CreatureBase creature ||
+            creature.HasDisposed ||
+            agent.AgentOwner is not IStorageAgent { Storage: not null } storageAgent)
+        {
+            return;
+        }
+
+        var storage = storageAgent.Storage;
+        var remaining = storage.GetTotalStoredCount();
+        if (remaining <= 0 || CanAttemptSmartUnload(agent, goal, creature, storage))
+        {
+            return;
+        }
+
+        DiagnosticTrace.Info(
+            "unload",
+            $"Dropping carry after incompletable {goal.GetType().Name} for {creature}: no storage candidate, carry={remaining}, carried=[{CarrySummaryUtil.Summarize(storage)}]",
+            20);
+        UnloadCarryContextStore.Clear(creature);
+        creature.DropStorage();
     }
 
     private sealed class GoalEndContext

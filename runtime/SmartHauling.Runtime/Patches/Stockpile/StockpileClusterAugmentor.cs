@@ -90,7 +90,10 @@ internal static class StockpileClusterAugmentor
         var orderedCandidates = sameTypeSweep.OrderedCandidates;
 
         var optimisticPickupBudget = getOptimisticPickupBudget(goal, firstPile.Blueprint);
-        var pickupBudget = Math.Max(1, destinationCapacityBudget > 0 ? Mathf.Min(destinationCapacityBudget, optimisticPickupBudget) : optimisticPickupBudget);
+        // Do not cap pickup budget by the seed resource destination estimate.
+        // Mixed-resource destination planning trims unsupported/over-capacity resources later,
+        // so this keeps bag fill behavior high without regressing destination safety.
+        var pickupBudget = Math.Max(1, optimisticPickupBudget);
         var totalPlanned = 0;
         var plannedWeight = 0f;
         var plannedAny = storageAgent.Storage.HasOneOrMoreResources();

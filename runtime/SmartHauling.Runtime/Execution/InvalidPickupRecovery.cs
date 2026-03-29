@@ -38,9 +38,9 @@ internal static class InvalidPickupRecovery
                 }
             }
 
-            return queuedTargets.Count > 0
-                ? new InvalidPickupRecoveryPlan(releaseCurrentTarget: true, queueIndexToDrop: 0)
-                : new InvalidPickupRecoveryPlan(releaseCurrentTarget: true, queueIndexToDrop: -1);
+            // The current target is stale and does not match the queued intent.
+            // Release only the stale current target and keep queued candidates so decide() can promote them.
+            return new InvalidPickupRecoveryPlan(releaseCurrentTarget: true, queueIndexToDrop: -1);
         }
 
         return queuedTargets.Count > 0

@@ -22,7 +22,7 @@ public sealed class InvalidPickupRecoveryTests
     }
 
     [Fact]
-    public void CreatePlan_WhenCurrentTargetIsStaleButQueueHasEntries_DropsQueueHead()
+    public void CreatePlan_WhenCurrentTargetIsStaleButQueueHasEntries_KeepsQueueAndReleasesOnlyCurrent()
     {
         // Arrange
         var stale = new object();
@@ -36,7 +36,7 @@ public sealed class InvalidPickupRecoveryTests
 
         // Assert
         Assert.True(plan.ReleaseCurrentTarget);
-        Assert.Equal(0, plan.QueueIndexToDrop);
+        Assert.Equal(-1, plan.QueueIndexToDrop);
         Assert.True(plan.HasAnyAction);
     }
 

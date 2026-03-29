@@ -152,7 +152,7 @@ internal static class HaulingDecisionTracePatch
             StockpileDestinationPlanStore.Clear(__instance);
         }
 
-        ApplySmartPlanGuards(__instance, ref __result, isSmart, observed);
+        ApplySmartPlanGuards(__instance, creature, ref __result, isSmart, observed);
 
         var resultValue = __result;
         var decisionContext = HaulingDecisionTraceDiagnostics.BuildDecisionContext(__instance, observed.FirstPile, observed.FirstStorage);
@@ -278,20 +278,32 @@ internal static class HaulingDecisionTracePatch
 
     private static void ApplySmartPlanGuards(
         StockpileHaulingGoal goal,
+        CreatureBase? creature,
         ref bool result,
         bool isSmart,
         ObservedHaulPlanState observed)
     {
-        if (!isSmart || !result || observed.FirstPile == null)
+        if (!result || observed.FirstPile == null || creature == null)
         {
             return;
         }
 
-        if (goal.AgentOwner is CreatureBase owner &&
+        if (!HasViableDestinationForFirstPile(goal, creature, observed))
+        {
+            StockpileHaulingGoalState.ResetGoalState(goal);
+            DiagnosticTrace.Info(
+                "haul.find.result",
+                () => $"Rejected haul for {goal.AgentOwner}: no viable destination for seed={observed.ResourceSummary?.BlueprintId ?? "<none>"}",
+                120);
+            result = false;
+            return;
+        }
+
+        if (isSmart &&
+            goal.AgentOwner is CreatureBase owner &&
             !ClusterOwnershipStore.CanUsePile(owner, observed.FirstPile))
         {
-            goal.GetTargetQueue(TargetIndex.A).Clear();
-            goal.GetTargetQueue(TargetIndex.B).Clear();
+            StockpileHaulingGoalState.ResetGoalState(goal);
             DiagnosticTrace.Info(
                 "haul.find.result",
                 () => $"Rejected claimed haul for {goal.AgentOwner}: {observed.ResourceSummary?.BlueprintId ?? "<none>"}",
@@ -303,14 +315,43 @@ internal static class HaulingDecisionTracePatch
         if (observed.FirstStorage != null &&
             !HaulingPriorityRules.CanMoveToPriority(observed.EffectiveSourcePriority, observed.FirstStorage.Priority))
         {
-            goal.GetTargetQueue(TargetIndex.A).Clear();
-            goal.GetTargetQueue(TargetIndex.B).Clear();
+            StockpileHaulingGoalState.ResetGoalState(goal);
             DiagnosticTrace.Info(
                 "haul.find.result",
                 () => $"Rejected haul for {goal.AgentOwner}: {observed.ResourceSummary?.BlueprintId ?? "<none>"} sourcePriority={observed.EffectiveSourcePriority} targetPriority={observed.FirstStorage.Priority}",
                 120);
             result = false;
         }
+    }
+
+    private static bool HasViableDestinationForFirstPile(
+        StockpileHaulingGoal goal,
+        CreatureBase creature,
+        ObservedHaulPlanState observed)
+    {
+        var firstPile = observed.FirstPile;
+        if (firstPile == null || firstPile.HasDisposed)
+        {
+            return false;
+        }
+
+        var seedResource = firstPile.GetStoredResource();
+        if (seedResource == null || seedResource.HasDisposed)
+        {
+            return false;
+        }
+
+        var requestedAmount = Math.Max(1, Math.Min(seedResource.Amount, GetOptimisticPickupBudget(goal, seedResource.Blueprint)));
+        var candidatePlan = StorageCandidatePlanner.BuildPlan(
+            goal,
+            creature,
+            seedResource,
+            ZonePriority.None,
+            observed.EffectiveSourcePriority,
+            enablePriorityFallback: false,
+            requestedAmount,
+            preferredStorage: observed.FirstStorage);
+        return candidatePlan.Primary != null;
     }
 
     private static bool TryBuildHardPlan(StockpileHaulingGoal goal)
@@ -438,7 +479,7 @@ internal static class HaulingDecisionTracePatch
             return false;
         }
 
-        var pickupBudget = Math.Max(1, Mathf.Min(destinationBudget, requestedAmount));
+        var pickupBudget = Math.Max(1, requestedAmount);
         var sourcePatchPiles = BuildPlayerForcedSourcePatch(anchorPile);
         var prioritySeedPiles = BuildPlayerForcedPrioritySeedPiles(anchorPile, playerForcedIntent);
 
@@ -681,7 +722,7 @@ internal static class HaulingDecisionTracePatch
             return null;
         }
 
-        var pickupBudget = Math.Max(1, Mathf.Min(destinationBudget, requestedAmount));
+        var pickupBudget = Math.Max(1, requestedAmount);
         var score = HaulingScore.CalculateMaterializedSelectionScore(
             pickupBudget,
             requestedAmount,
@@ -785,20 +826,26 @@ internal static class HaulingDecisionTracePatch
 
     private static int GetOptimisticPickupBudget(StockpileHaulingGoal goal, Resource blueprint)
     {
-        if (goal.AgentOwner is IStorageAgent { Storage: not null } storageAgent && blueprint != null)
+        var fallbackBudget = Math.Max(1, StockpileHaulingGoalState.GetMaxCarryAmount(goal));
+        if (goal.AgentOwner is not IStorageAgent { Storage: not null } storageAgent)
         {
-            var projected = PickupPlanningUtil.GetProjectedCapacity(
-                storageAgent.Storage,
-                blueprint,
-                0f,
-                storageAgent.Storage.HasOneOrMoreResources());
-            if (projected > 0)
-            {
-                return projected;
-            }
+            return fallbackBudget;
         }
 
-        return Math.Max(1, StockpileHaulingGoalState.GetMaxCarryAmount(goal));
+        var storage = storageAgent.Storage;
+        var freeSpaceBudget = Math.Max(1, Mathf.FloorToInt(Math.Max(0f, storage.GetFreeSpace())));
+
+        var projectedBudget = blueprint != null
+            ? PickupPlanningUtil.GetProjectedCapacity(
+                storage,
+                blueprint,
+                0f,
+                storage.HasOneOrMoreResources())
+            : 0;
+
+        // Keep bag-fill planning robust even when the first seed is an equipment/single-item resource,
+        // where blueprint-projected capacity is often just 1.
+        return Math.Max(fallbackBudget, Math.Max(freeSpaceBudget, projectedBudget));
     }
 
     internal static string DescribeTaskSeeds(IEnumerable<StockpileTaskSeed> seeds, int maxSeeds = 6)

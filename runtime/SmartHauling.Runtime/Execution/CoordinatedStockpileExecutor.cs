@@ -392,10 +392,24 @@ internal static class CoordinatedStockpileExecutor
         }
 
         if (goal is not StockpileHaulingGoal stockpileGoal ||
-            !HaulSourcePolicy.ValidatePile(stockpileGoal, pile) ||
             !HaulSourcePolicy.CanReachPile(stockpileGoal, pile))
         {
             return false;
+        }
+
+        var validateSucceeded = HaulSourcePolicy.ValidatePile(stockpileGoal, pile);
+        var hasPlannedStorages = CoordinatedDropPlanLookup.TryGetPlannedStorages(goal, pile.BlueprintId, out var plannedStorages);
+        if (!validateSucceeded && !hasPlannedStorages)
+        {
+            return false;
+        }
+
+        if (!validateSucceeded)
+        {
+            DiagnosticTrace.Info(
+                "coord.exec",
+                $"Bypassed vanilla pickup validation for {goal.AgentOwner}: resource={pile.BlueprintId}, plannedStorages={plannedStorages.Count}",
+                120);
         }
 
         ForceTarget(goal, TargetIndex.A, nextTarget);
