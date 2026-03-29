@@ -4,11 +4,14 @@ using HarmonyLib;
 using NSEipix.Base;
 using NSMedieval.Manager;
 using NSMedieval.State;
+using SmartHauling.Runtime.Composition;
 
 namespace SmartHauling.Runtime.Infrastructure.World;
 
 internal sealed class GameHaulWorldSnapshotProvider : IHaulWorldSnapshotProvider
 {
+    private const float StoredPileSnapshotLifetimeSeconds = 1f;
+
     private static readonly PropertyInfo? CreaturesProperty =
         AccessTools.Property(typeof(CreatureManager), "Creatures");
 
@@ -24,6 +27,10 @@ internal sealed class GameHaulWorldSnapshotProvider : IHaulWorldSnapshotProvider
     private static readonly PropertyInfo PilesToReStoreProperty =
         AccessTools.Property(typeof(ResourcePileHaulingManager), "PilesToReStore")!;
 
+    private readonly object storedPileSnapshotSyncRoot = new();
+    private IReadOnlyList<ResourcePileInstance> cachedStoredPileCandidates = Array.Empty<ResourcePileInstance>();
+    private float cachedStoredPileCandidatesExpiresAt;
+
     public IReadOnlyList<ResourcePileInstance> GetCentralHaulSourcePiles()
     {
         var haulingManager = MonoSingleton<ResourcePileHaulingManager>.Instance;
@@ -37,8 +44,8 @@ internal sealed class GameHaulWorldSnapshotProvider : IHaulWorldSnapshotProvider
 
         var mergedCandidates = CentralHaulSourceFilter.MergeCandidates(
             preferredCandidates,
-            GetAllKnownPileInstances(),
-            pile => pile != null && pile.PlacedOnStorage != null,
+            GetStoredPileCandidatesSnapshot(),
+            pile => pile != null,
             ReferenceEqualityComparer<ResourcePileInstance>.Instance);
 
         return CentralHaulSourceFilter.FilterWithSingleStorageSnapshot(
@@ -83,6 +90,25 @@ internal sealed class GameHaulWorldSnapshotProvider : IHaulWorldSnapshotProvider
             }
         }
     }
+
+    private IReadOnlyList<ResourcePileInstance> GetStoredPileCandidatesSnapshot()
+    {
+        var now = RuntimeServices.Clock.RealtimeSinceStartup;
+        lock (storedPileSnapshotSyncRoot)
+        {
+            if (cachedStoredPileCandidatesExpiresAt > now)
+            {
+                return cachedStoredPileCandidates;
+            }
+
+            cachedStoredPileCandidates = GetAllKnownPileInstances()
+                .Where(pile => pile != null && !pile.HasDisposed && pile.PlacedOnStorage != null)
+                .ToList();
+            cachedStoredPileCandidatesExpiresAt = now + StoredPileSnapshotLifetimeSeconds;
+            return cachedStoredPileCandidates;
+        }
+    }
+
     private static void AddPileSequence(HashSet<ResourcePileInstance> target, IEnumerable? source)
     {
         if (source == null)
