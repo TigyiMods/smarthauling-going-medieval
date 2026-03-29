@@ -27,6 +27,7 @@ This file follows a lightweight Keep a Changelog style.
 - Player-forced hauling now keeps recently prioritized nearby pickups ahead of non-priority fillers when extending a smart local haul.
 - Player-forced smart hauling now recognizes any pending priority-haul pickup in the local batch instead of only the latest anchor pile.
 - Priority-haul ground items routed through `StockpileUrgentHaulingGoal` now use the same local smart extension path, keeping urgent pickups ahead of filler loads.
+- Lower-priority stockpile piles are now kept in the central haul source snapshot even when vanilla haul managers already expose other candidates, so storage-to-storage reprioritization can still promote goods into higher-priority stockpiles.
 - Trace-level SmartHauling diagnostics no longer synchronously spam `LogOutput.log`, which reduces debug-mode logging overhead during long-running colonies.
 - Added a visual stall snapshot path for hauling goals so stationary `Hauling (smart)` stalls are logged even when internal target state jitters and the hard watchdog does not abort.
 

@@ -27,24 +27,22 @@ internal sealed class GameHaulWorldSnapshotProvider : IHaulWorldSnapshotProvider
     public IReadOnlyList<ResourcePileInstance> GetCentralHaulSourcePiles()
     {
         var haulingManager = MonoSingleton<ResourcePileHaulingManager>.Instance;
-        var haulableSet = new HashSet<ResourcePileInstance>(ReferenceEqualityComparer<ResourcePileInstance>.Instance);
+        var preferredCandidates = new HashSet<ResourcePileInstance>(ReferenceEqualityComparer<ResourcePileInstance>.Instance);
 
         if (haulingManager != null)
         {
-            AddPileSequence(haulableSet, CanBeStoredProperty.GetValue(haulingManager) as IEnumerable);
-            AddPileSequence(haulableSet, PilesToReStoreProperty.GetValue(haulingManager) as IEnumerable);
+            AddPileSequence(preferredCandidates, CanBeStoredProperty.GetValue(haulingManager) as IEnumerable);
+            AddPileSequence(preferredCandidates, PilesToReStoreProperty.GetValue(haulingManager) as IEnumerable);
         }
 
-        if (haulableSet.Count > 0)
-        {
-            return CentralHaulSourceFilter.FilterWithSingleStorageSnapshot(
-                haulableSet,
-                StorageCandidatePlanner.GetAllStoragesSnapshot,
-                HaulSourcePolicy.CanUseAsCentralHaulSource);
-        }
+        var mergedCandidates = CentralHaulSourceFilter.MergeCandidates(
+            preferredCandidates,
+            GetAllKnownPileInstances(),
+            pile => pile != null && pile.PlacedOnStorage != null,
+            ReferenceEqualityComparer<ResourcePileInstance>.Instance);
 
         return CentralHaulSourceFilter.FilterWithSingleStorageSnapshot(
-            GetAllKnownPileInstances(),
+            mergedCandidates,
             StorageCandidatePlanner.GetAllStoragesSnapshot,
             HaulSourcePolicy.CanUseAsCentralHaulSource);
     }
