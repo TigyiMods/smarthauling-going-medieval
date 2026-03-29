@@ -58,8 +58,7 @@ internal static class DiagnosticTrace
         }
 
         StopWriter();
-        traceFilePath = overrideTraceFilePath ?? Path.Combine(Paths.BepInExRootPath, "SmartHauling.trace.log");
-        StartWriter();
+        EnsureSessionStarted(overrideTraceFilePath);
         if (ShouldLogLevel(DiagnosticLogLevel.Info))
         {
             WriteLine(DiagnosticLogLevel.Info, "session", $"=== Session started {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} ===");
@@ -69,6 +68,29 @@ internal static class DiagnosticTrace
     public static void Shutdown()
     {
         StopWriter();
+        traceFilePath = null;
+    }
+
+    internal static void EnsureSessionStarted(string? overrideTraceFilePath = null)
+    {
+        if (!IsEnabled)
+        {
+            return;
+        }
+
+        lock (WriterSyncRoot)
+        {
+            if (!string.IsNullOrWhiteSpace(overrideTraceFilePath))
+            {
+                traceFilePath = overrideTraceFilePath;
+            }
+            else if (string.IsNullOrWhiteSpace(traceFilePath))
+            {
+                traceFilePath = Path.Combine(Paths.BepInExRootPath, "SmartHauling.trace.log");
+            }
+        }
+
+        StartWriter();
     }
 
     public static void Info(string category, string message, int limit = 20)
@@ -81,6 +103,21 @@ internal static class DiagnosticTrace
         WriteLine(DiagnosticLogLevel.Info, category, message);
     }
 
+    public static void Info(string category, Func<string> messageFactory, int limit = 20)
+    {
+        if (messageFactory == null)
+        {
+            throw new ArgumentNullException(nameof(messageFactory));
+        }
+
+        if (!ShouldLog(DiagnosticLogLevel.Info, category, limit))
+        {
+            return;
+        }
+
+        WriteLine(DiagnosticLogLevel.Info, category, messageFactory());
+    }
+
     public static void Error(string category, string message)
     {
         if (!ShouldLogLevel(DiagnosticLogLevel.Error))
@@ -91,6 +128,21 @@ internal static class DiagnosticTrace
         WriteLine(DiagnosticLogLevel.Error, category, message);
     }
 
+    public static void Error(string category, Func<string> messageFactory)
+    {
+        if (messageFactory == null)
+        {
+            throw new ArgumentNullException(nameof(messageFactory));
+        }
+
+        if (!ShouldLogLevel(DiagnosticLogLevel.Error))
+        {
+            return;
+        }
+
+        WriteLine(DiagnosticLogLevel.Error, category, messageFactory());
+    }
+
     public static void Raw(string category, string message)
     {
         if (!ShouldLogLevel(DiagnosticLogLevel.Trace))
@@ -99,6 +151,21 @@ internal static class DiagnosticTrace
         }
 
         WriteLine(DiagnosticLogLevel.Trace, category, message);
+    }
+
+    public static void Raw(string category, Func<string> messageFactory)
+    {
+        if (messageFactory == null)
+        {
+            throw new ArgumentNullException(nameof(messageFactory));
+        }
+
+        if (!ShouldLogLevel(DiagnosticLogLevel.Trace))
+        {
+            return;
+        }
+
+        WriteLine(DiagnosticLogLevel.Trace, category, messageFactory());
     }
 
     private static bool ShouldLog(DiagnosticLogLevel level, string category, int defaultLimit)
@@ -141,6 +208,7 @@ internal static class DiagnosticTrace
             return;
         }
 
+        StartWriter();
         PendingFileLines.Enqueue(line);
         Interlocked.Increment(ref pendingFileLineCount);
         PendingFileSignal.Set();
@@ -151,6 +219,11 @@ internal static class DiagnosticTrace
         if (Volatile.Read(ref pendingFileLineCount) <= 0)
         {
             return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(traceFilePath))
+        {
+            StartWriter();
         }
 
         var deadline = Stopwatch.StartNew();
@@ -165,9 +238,10 @@ internal static class DiagnosticTrace
 
     private static void WriteToLogger(DiagnosticLogLevel level, string line)
     {
-        // Keep user-facing info/error diagnostics immediate, but route trace spam to the
-        // dedicated trace file so the main game loop does not synchronously spam LogOutput.
-        if (level == DiagnosticLogLevel.Trace)
+        // When a dedicated trace session is active, keep trace/info traffic off the main logger
+        // to avoid synchronous LogOutput churn on the game thread. Errors still go through.
+        if (level == DiagnosticLogLevel.Trace ||
+            (level == DiagnosticLogLevel.Info && !string.IsNullOrWhiteSpace(traceFilePath)))
         {
             return;
         }

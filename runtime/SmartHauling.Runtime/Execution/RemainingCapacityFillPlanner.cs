@@ -68,6 +68,11 @@ internal static class RemainingCapacityFillPlanner
                 continue;
             }
 
+            if (!CanAppendResource(goal, storage, storedResource.Blueprint))
+            {
+                continue;
+            }
+
             var requestedAmount = PickupPlanningUtil.GetProjectedCapacity(
                 storage,
                 storedResource.Blueprint,
@@ -79,7 +84,15 @@ internal static class RemainingCapacityFillPlanner
                 continue;
             }
 
-            if (!TryResolveFillDestinationPlan(goal, creature, storedResource, pile, requestedAmount, out var orderedStorages))
+            if (!TryResolveFillDestinationPlan(
+                    goal,
+                    creature,
+                    storedResource,
+                    pile,
+                    requestedAmount,
+                    out var effectiveRequestedAmount,
+                    out var orderedStorages,
+                    out var plannedAllocations))
             {
                 continue;
             }
@@ -87,8 +100,9 @@ internal static class RemainingCapacityFillPlanner
             var candidate = new DynamicFillCandidate(
                 pile,
                 storedResource.Blueprint,
-                requestedAmount,
+                effectiveRequestedAmount,
                 orderedStorages,
+                plannedAllocations,
                 Vector3.Distance(creature.GetPosition(), pile.GetPosition()),
                 patchDistance,
                 CoordinatedDropPlanLookup.TryGetPlannedStorages(goal, storedResource.BlueprintId, out _));
@@ -124,7 +138,8 @@ internal static class RemainingCapacityFillPlanner
             goal,
             bestCandidate.Blueprint.GetID(),
             bestCandidate.OrderedStorages,
-            bestCandidate.RequestedAmount);
+            bestCandidate.RequestedAmount,
+            bestCandidate.PlannedAllocations);
         if (CarrySummaryUtil.Snapshot(storage).Any(resource => resource.BlueprintId != bestCandidate.Blueprint.GetID()))
         {
             MixedCollectPlanStore.MarkStartedMixed(goal);
@@ -156,11 +171,22 @@ internal static class RemainingCapacityFillPlanner
         ResourceInstance storedResource,
         ResourcePileInstance pile,
         int requestedAmount,
-        out IReadOnlyList<IStorage> orderedStorages)
+        out int effectiveRequestedAmount,
+        out IReadOnlyList<IStorage> orderedStorages,
+        out IReadOnlyList<StockpileStorageAllocation> plannedAllocations)
     {
+        effectiveRequestedAmount = requestedAmount;
+        if (CoordinatedDropPlanLookup.TryGetPlannedAllocations(goal, storedResource.BlueprintId, out plannedAllocations) &&
+            plannedAllocations.Count > 0)
+        {
+            orderedStorages = plannedAllocations.Select(allocation => allocation.Storage).ToList();
+            return orderedStorages.Count > 0;
+        }
+
         if (CoordinatedDropPlanLookup.TryGetPlannedStorages(goal, storedResource.BlueprintId, out orderedStorages) &&
             orderedStorages.Count > 0)
         {
+            plannedAllocations = Array.Empty<StockpileStorageAllocation>();
             return true;
         }
 
@@ -176,11 +202,42 @@ internal static class RemainingCapacityFillPlanner
         if (candidatePlan.Primary == null || candidatePlan.GetEstimatedCapacityBudget(requestedAmount) <= 0)
         {
             orderedStorages = null!;
+            plannedAllocations = null!;
             return false;
         }
 
-        orderedStorages = candidatePlan.OrderedStorages;
+        var plannedAmount = candidatePlan.GetEstimatedCapacityBudget(requestedAmount);
+        effectiveRequestedAmount = plannedAmount;
+        plannedAllocations = StorageAllocationPlanBuilder.BuildFromCandidates(candidatePlan.Candidates, plannedAmount);
+        orderedStorages = plannedAllocations.Count > 0
+            ? plannedAllocations.Select(allocation => allocation.Storage).ToList()
+            : candidatePlan.OrderedStorages;
         return orderedStorages.Count > 0;
+    }
+
+    private static bool CanAppendResource(Goal goal, Storage storage, Resource blueprint)
+    {
+        if (storage == null || blueprint == null)
+        {
+            return false;
+        }
+
+        var carriedResources = CarrySummaryUtil.Snapshot(storage);
+        if (carriedResources.Count == 0)
+        {
+            return true;
+        }
+
+        var hasMixedPlan = MixedCollectPlanStore.HasMixedPlan(goal);
+        if (!hasMixedPlan && carriedResources.Any(resource => resource.Blueprint != blueprint))
+        {
+            // Allow introducing one additional resource type when currently carrying a single type.
+            // The mixed-plan flag will be set when this candidate is appended.
+            return carriedResources.Count == 1;
+        }
+
+        var singleResource = storage.GetSingleResource();
+        return hasMixedPlan || singleResource == null || singleResource.Blueprint == blueprint;
     }
 
     private static IReadOnlyList<ResourcePileInstance> GetFillAnchorPiles(Goal goal)
@@ -238,6 +295,7 @@ internal static class RemainingCapacityFillPlanner
             Resource blueprint,
             int requestedAmount,
             IReadOnlyList<IStorage> orderedStorages,
+            IReadOnlyList<StockpileStorageAllocation> plannedAllocations,
             float distance,
             float patchDistance,
             bool hasExistingDropPlan)
@@ -246,6 +304,7 @@ internal static class RemainingCapacityFillPlanner
             Blueprint = blueprint;
             RequestedAmount = requestedAmount;
             OrderedStorages = orderedStorages;
+            PlannedAllocations = plannedAllocations;
             Distance = distance;
             PatchDistance = patchDistance;
             HasExistingDropPlan = hasExistingDropPlan;
@@ -258,6 +317,8 @@ internal static class RemainingCapacityFillPlanner
         public int RequestedAmount { get; }
 
         public IReadOnlyList<IStorage> OrderedStorages { get; }
+
+        public IReadOnlyList<StockpileStorageAllocation> PlannedAllocations { get; }
 
         public float Distance { get; }
 

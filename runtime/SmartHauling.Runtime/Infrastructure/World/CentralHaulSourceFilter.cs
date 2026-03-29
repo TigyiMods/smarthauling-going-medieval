@@ -1,5 +1,3 @@
-using NSMedieval;
-
 namespace SmartHauling.Runtime.Infrastructure.World;
 
 internal static class CentralHaulSourceFilter
@@ -41,10 +39,10 @@ internal static class CentralHaulSourceFilter
         return merged;
     }
 
-    internal static IReadOnlyList<TPile> FilterWithSingleStorageSnapshot<TPile>(
+    internal static IReadOnlyList<TPile> FilterWithSingleStorageSnapshot<TPile, TStorageSnapshot>(
         IEnumerable<TPile> candidatePiles,
-        Func<IReadOnlyList<IStorage>> getStorageSnapshot,
-        Func<TPile, IReadOnlyList<IStorage>, bool> canUseCandidate)
+        Func<IReadOnlyList<TStorageSnapshot>> getStorageSnapshot,
+        Func<TPile, IReadOnlyList<TStorageSnapshot>, bool> canUseCandidate)
     {
         if (candidatePiles == null)
         {
@@ -61,7 +59,7 @@ internal static class CentralHaulSourceFilter
             throw new ArgumentNullException(nameof(canUseCandidate));
         }
 
-        var storageSnapshot = getStorageSnapshot() ?? Array.Empty<IStorage>();
+        var storageSnapshot = getStorageSnapshot() ?? Array.Empty<TStorageSnapshot>();
 
         return candidatePiles
             .Where(candidate => canUseCandidate(candidate, storageSnapshot))

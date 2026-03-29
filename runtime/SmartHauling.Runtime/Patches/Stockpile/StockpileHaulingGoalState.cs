@@ -65,6 +65,10 @@ internal static class StockpileHaulingGoalState
                 sourcePriority,
                 plannedPickups,
                 destinationPlan);
+            if (CoordinatedStockpileTaskStore.TryGet(goal, out var task))
+            {
+                RewritePickupQueue(goal, task.PlannedPickups);
+            }
         }
 
         return TotalTargetedCountRef(goal) > 0 &&
@@ -131,6 +135,20 @@ internal static class StockpileHaulingGoalState
     internal static void QueueTarget(Goal goal, TargetIndex index, TargetObject target)
     {
         GoalTargetQueueAccess.QueueTarget(goal, index, target);
+    }
+
+    private static void RewritePickupQueue(Goal goal, IReadOnlyList<ResourcePileInstance> plannedPickups)
+    {
+        if (goal == null)
+        {
+            return;
+        }
+
+        ClearTargetsQueue(goal, TargetIndex.A);
+        foreach (var pile in plannedPickups.Where(pile => pile != null && !pile.HasDisposed))
+        {
+            QueueTarget(goal, TargetIndex.A, new TargetObject(pile));
+        }
     }
 
     private static void ReleaseQueuedTargets(Goal goal, TargetIndex index)

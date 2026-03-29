@@ -6,11 +6,16 @@ namespace SmartHauling.Runtime;
 
 internal sealed class StockpileDestinationResourcePlan
 {
-    public StockpileDestinationResourcePlan(string resourceId, IReadOnlyList<IStorage> orderedStorages, int requestedAmount)
+    public StockpileDestinationResourcePlan(
+        string resourceId,
+        IReadOnlyList<IStorage> orderedStorages,
+        int requestedAmount,
+        IReadOnlyList<StockpileStorageAllocation>? plannedAllocations = null)
     {
         ResourceId = resourceId;
         OrderedStorages = orderedStorages;
         RequestedAmount = requestedAmount;
+        PlannedAllocations = plannedAllocations ?? Array.Empty<StockpileStorageAllocation>();
     }
 
     public string ResourceId { get; }
@@ -19,12 +24,27 @@ internal sealed class StockpileDestinationResourcePlan
 
     public int RequestedAmount { get; }
 
+    public IReadOnlyList<StockpileStorageAllocation> PlannedAllocations { get; }
+
     public IReadOnlyList<IStorage> GetActiveStorages()
     {
+        var activeAllocations = GetActiveAllocations();
+        if (activeAllocations.Count > 0)
+        {
+            return activeAllocations
+                .Select(allocation => allocation.Storage)
+                .ToList();
+        }
+
         return OrderedStorages
             .Where(storage => storage != null && !storage.HasDisposed)
             .Distinct(ReferenceEqualityComparer<IStorage>.Instance)
             .ToList();
+    }
+
+    public IReadOnlyList<StockpileStorageAllocation> GetActiveAllocations()
+    {
+        return StorageAllocationPlanBuilder.MergeAllocations(PlannedAllocations);
     }
 }
 
@@ -63,6 +83,13 @@ internal sealed class StockpileDestinationPlan
         return TryGetResourcePlan(resourceId, out var plan)
             ? plan.GetActiveStorages()
             : new List<IStorage>();
+    }
+
+    public IReadOnlyList<StockpileStorageAllocation> GetActiveAllocations(string? resourceId = null)
+    {
+        return TryGetResourcePlan(resourceId, out var plan)
+            ? plan.GetActiveAllocations()
+            : new List<StockpileStorageAllocation>();
     }
 
     public int GetRequestedAmount(string? resourceId = null)
@@ -112,8 +139,7 @@ internal static class StockpileDestinationPlanStore
             .Where(plan =>
                 plan != null &&
                 !string.IsNullOrWhiteSpace(plan.ResourceId) &&
-                plan.OrderedStorages != null &&
-                plan.OrderedStorages.Count > 0)
+                plan.GetActiveStorages().Count > 0)
             .GroupBy(plan => plan.ResourceId)
             .ToDictionary(
                 group => group.Key,
@@ -123,7 +149,8 @@ internal static class StockpileDestinationPlanStore
                         .Where(storage => storage != null)
                         .Distinct(ReferenceEqualityComparer<IStorage>.Instance)
                         .ToList(),
-                    group.Max(plan => plan.RequestedAmount)))
+                    group.Max(plan => plan.RequestedAmount),
+                    StorageAllocationPlanBuilder.MergeAllocations(group.SelectMany(plan => plan.GetActiveAllocations()))))
             ?? new Dictionary<string, StockpileDestinationResourcePlan>();
 
         if (plans.Count == 0 || string.IsNullOrWhiteSpace(primaryResourceId))
@@ -174,6 +201,21 @@ internal static class StockpileDestinationPlanStore
         return false;
     }
 
+    public static bool TryGetActiveAllocations(Goal goal, string? resourceId, out IReadOnlyList<StockpileStorageAllocation> allocations)
+    {
+        if (TryGet(goal, out var plan))
+        {
+            allocations = plan.GetActiveAllocations(resourceId);
+            if (allocations.Count > 0)
+            {
+                return true;
+            }
+        }
+
+        allocations = null!;
+        return false;
+    }
+
     public static int GetRequestedAmount(Goal goal, string? resourceId)
     {
         return TryGet(goal, out var plan) ? plan.GetRequestedAmount(resourceId) : 0;
@@ -193,7 +235,8 @@ internal static class StockpileDestinationPlanStore
         Goal goal,
         string resourceId,
         IEnumerable<IStorage> orderedStorages,
-        int requestedAmount)
+        int requestedAmount,
+        IEnumerable<StockpileStorageAllocation>? plannedAllocations = null)
     {
         if (goal == null || string.IsNullOrWhiteSpace(resourceId) || orderedStorages == null)
         {
@@ -210,7 +253,8 @@ internal static class StockpileDestinationPlanStore
                 mergedPlans[existingResourcePlan.ResourceId] = new StockpileDestinationResourcePlan(
                     existingResourcePlan.ResourceId,
                     existingResourcePlan.GetActiveStorages(),
-                    existingResourcePlan.RequestedAmount);
+                    existingResourcePlan.RequestedAmount,
+                    existingResourcePlan.GetActiveAllocations());
             }
         }
 
@@ -225,6 +269,9 @@ internal static class StockpileDestinationPlanStore
 
         if (mergedPlans.TryGetValue(resourceId, out var currentPlan))
         {
+            var mergedAllocations = StorageAllocationPlanBuilder.MergeAllocations(
+                currentPlan.GetActiveAllocations()
+                    .Concat(plannedAllocations ?? Array.Empty<StockpileStorageAllocation>()));
             mergedPlans[resourceId] = new StockpileDestinationResourcePlan(
                 resourceId,
                 currentPlan.GetActiveStorages()
@@ -232,14 +279,16 @@ internal static class StockpileDestinationPlanStore
                     .Where(storage => storage != null && !storage.HasDisposed)
                     .Distinct(ReferenceEqualityComparer<IStorage>.Instance)
                     .ToList(),
-                System.Math.Max(currentPlan.RequestedAmount, requestedAmount));
+                System.Math.Max(currentPlan.RequestedAmount, requestedAmount),
+                mergedAllocations);
         }
         else
         {
             mergedPlans[resourceId] = new StockpileDestinationResourcePlan(
                 resourceId,
                 activeStorages,
-                requestedAmount);
+                requestedAmount,
+                StorageAllocationPlanBuilder.MergeAllocations(plannedAllocations));
         }
 
         Set(goal, primaryResourceId, mergedPlans.Values);

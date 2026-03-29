@@ -22,6 +22,12 @@ internal static class RecentGoalOriginStore
         var carryCount = creature is IStorageAgent { Storage: not null } storageAgent
             ? storageAgent.Storage.GetTotalStoredCount()
             : 0;
+        var actionId = goal.CurrentAction?.Id ?? "<none>";
+        var normalizedCondition = NormalizeRecordedCondition(
+            goal.GetType().Name,
+            actionId,
+            condition,
+            carryCount);
         var carrySummary = creature is IStorageAgent { Storage: not null } summaryAgent
             ? CarrySummaryUtil.Summarize(summaryAgent.Storage)
             : "<no-storage>";
@@ -32,8 +38,8 @@ internal static class RecentGoalOriginStore
             RecentByCreature[creature] = new RecentGoalEndContext(
                 goal.GetType().Name,
                 StockpileHaulPolicy.ClassifyRecentGoal(goal),
-                goal.CurrentAction?.Id ?? "<none>",
-                condition,
+                actionId,
+                normalizedCondition,
                 RuntimeServices.Clock.RealtimeSinceStartup,
                 carryCount,
                 carrySummary);
@@ -67,6 +73,22 @@ internal static class RecentGoalOriginStore
         {
             RecentByCreature.Remove(creature);
         }
+    }
+
+    internal static GoalCondition NormalizeRecordedCondition(
+        string goalType,
+        string actionId,
+        GoalCondition condition,
+        int carryCount)
+    {
+        if (string.Equals(goalType, "SmartUnloadGoal", System.StringComparison.Ordinal) &&
+            string.Equals(actionId, "Instant SmartUnload.Done", System.StringComparison.Ordinal) &&
+            carryCount <= 0)
+        {
+            return GoalCondition.Succeeded;
+        }
+
+        return condition;
     }
 
     internal readonly struct RecentGoalEndContext

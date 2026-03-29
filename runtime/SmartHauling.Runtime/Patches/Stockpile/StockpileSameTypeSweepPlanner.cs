@@ -84,6 +84,7 @@ internal static class StockpileSameTypeSweepPlanner
         ResourcePileInstance firstPile,
         IReadOnlyCollection<ResourcePileInstance> sourcePatchPiles,
         IStorage firstStorage,
+        IReadOnlyCollection<IStorage> destinationStorages,
         float sourceClusterExtent,
         float patchSweepExtent,
         float patchSweepLinkExtent,
@@ -106,7 +107,8 @@ internal static class StockpileSameTypeSweepPlanner
         var reachRejected = 0;
         var cooldownRejected = 0;
         var detailSamples = new List<string>();
-        var targetPosition = StockpileClusterAugmentor.TryGetPosition(firstStorage);
+        var destinationAnchors = BuildDestinationAnchors(firstStorage, destinationStorages);
+        var targetPosition = GetNearestTargetPosition(firstPile.GetPosition(), destinationAnchors);
         var sourceToTargetDistance = targetPosition.HasValue
             ? Vector3.Distance(firstPile.GetPosition(), targetPosition.Value)
             : -1f;
@@ -142,10 +144,39 @@ internal static class StockpileSameTypeSweepPlanner
                 sameTypeAmount += storedResource.Amount;
             }
 
+            if (storedResource == null || storedResource.HasDisposed)
+            {
+                continue;
+            }
+
+            var pileSourcePriority = StoragePriorityUtil.GetEffectiveSourcePriority(pile);
+            if (!TrySelectCompatibleDestination(
+                    creature,
+                    pile,
+                    storedResource,
+                    pileSourcePriority,
+                    destinationAnchors,
+                    out var compatibleTargetPosition,
+                    out var compatibilityRejection))
+            {
+                if (compatibilityRejection == "priority")
+                {
+                    priorityRejected++;
+                    CaptureDetail(detailSamples, $"{pile.BlueprintId}:priority({pileSourcePriority}->{firstStorage.Priority})");
+                }
+                else
+                {
+                    storageRejected++;
+                    CaptureDetail(detailSamples, $"{pile.BlueprintId}:store");
+                }
+
+                continue;
+            }
+
             if (!StockpileClusterAugmentor.IsSweepCandidateWorthwhile(
                     firstPile,
                     pile,
-                    targetPosition,
+                    compatibleTargetPosition,
                     detourBudget,
                     usePatchSweep,
                     patchComponent,
@@ -157,7 +188,7 @@ internal static class StockpileSameTypeSweepPlanner
                     detailSamples,
                     usePatchSweep
                         ? $"{pile.BlueprintId}:patch({detourCost:0.0}>{patchSweepExtent:0.0})"
-                        : targetPosition.HasValue
+                        : compatibleTargetPosition.HasValue
                             ? $"{pile.BlueprintId}:detour({detourCost:0.0}>{detourBudget:0.0})"
                             : $"{pile.BlueprintId}:radius");
                 continue;
@@ -197,35 +228,13 @@ internal static class StockpileSameTypeSweepPlanner
                 continue;
             }
 
-            if (storedResource == null || storedResource.HasDisposed)
-            {
-                continue;
-            }
-
-            var pileSourcePriority = StoragePriorityUtil.GetEffectiveSourcePriority(pile);
-            if (!HaulingPriorityRules.CanMoveToPriority(pileSourcePriority, firstStorage.Priority))
-            {
-                priorityRejected++;
-                CaptureDetail(detailSamples, $"{pile.BlueprintId}:priority({pileSourcePriority}->{firstStorage.Priority})");
-                continue;
-            }
-
-            if (!firstStorage.CanStore(storedResource, creature))
-            {
-                storageRejected++;
-                CaptureDetail(detailSamples, $"{pile.BlueprintId}:store");
-                continue;
-            }
-
             candidatePiles.Add(pile);
         }
 
-        var orderedCandidates = candidatePiles
-            .OrderBy(pile => usePatchSweep
-                ? Vector3.Distance(firstPile.GetPosition(), pile.GetPosition())
-                : StockpileClusterAugmentor.GetAdditionalDetour(firstPile, pile, targetPosition))
-            .ThenBy(pile => Vector3.Distance(firstPile.GetPosition(), pile.GetPosition()))
-            .ToList();
+        var orderedCandidates = PickupRouteOrdering.OrderCandidates(
+            candidatePiles,
+            firstPile.GetPosition(),
+            targetPosition);
 
         return new StockpileSameTypeSweepResult(
             orderedCandidates,
@@ -244,6 +253,135 @@ internal static class StockpileSameTypeSweepPlanner
             reachRejected,
             cooldownRejected,
             detailSamples);
+    }
+
+    private static IReadOnlyList<DestinationAnchor> BuildDestinationAnchors(
+        IStorage firstStorage,
+        IReadOnlyCollection<IStorage> destinationStorages)
+    {
+        var anchors = new List<DestinationAnchor>();
+        var seen = new HashSet<IStorage>(ReferenceEqualityComparer<IStorage>.Instance);
+        AddAnchor(firstStorage, anchors, seen);
+        foreach (var storage in destinationStorages.Where(storage => storage != null))
+        {
+            AddAnchor(storage, anchors, seen);
+        }
+
+        return anchors;
+    }
+
+    private static void AddAnchor(
+        IStorage storage,
+        ICollection<DestinationAnchor> anchors,
+        ISet<IStorage> seen)
+    {
+        if (storage == null || storage.HasDisposed || !seen.Add(storage))
+        {
+            return;
+        }
+
+        anchors.Add(new DestinationAnchor(storage, StockpileClusterAugmentor.TryGetPosition(storage)));
+    }
+
+    private static Vector3? GetNearestTargetPosition(
+        Vector3 sourcePosition,
+        IReadOnlyList<DestinationAnchor> destinationAnchors)
+    {
+        Vector3? bestPosition = null;
+        var bestDistance = float.MaxValue;
+        foreach (var anchor in destinationAnchors)
+        {
+            if (!anchor.Position.HasValue)
+            {
+                continue;
+            }
+
+            var distance = Vector3.Distance(sourcePosition, anchor.Position.Value);
+            if (distance >= bestDistance)
+            {
+                continue;
+            }
+
+            bestDistance = distance;
+            bestPosition = anchor.Position;
+        }
+
+        return bestPosition;
+    }
+
+    private static bool TrySelectCompatibleDestination(
+        CreatureBase creature,
+        ResourcePileInstance pile,
+        ResourceInstance storedResource,
+        ZonePriority sourcePriority,
+        IReadOnlyList<DestinationAnchor> destinationAnchors,
+        out Vector3? compatibleTargetPosition,
+        out string rejection)
+    {
+        compatibleTargetPosition = null;
+        rejection = "priority";
+
+        var priorityMatched = false;
+        var foundCompatible = false;
+        var bestDistance = float.MaxValue;
+        foreach (var anchor in destinationAnchors)
+        {
+            var storage = anchor.Storage;
+            if (storage == null || storage.HasDisposed)
+            {
+                continue;
+            }
+
+            if (!HaulingPriorityRules.CanMoveToPriority(sourcePriority, storage.Priority))
+            {
+                continue;
+            }
+
+            priorityMatched = true;
+            if (!storage.CanStore(storedResource, creature))
+            {
+                continue;
+            }
+
+            foundCompatible = true;
+            if (!anchor.Position.HasValue)
+            {
+                continue;
+            }
+
+            var distance = anchor.Position.HasValue
+                ? Vector3.Distance(pile.GetPosition(), anchor.Position.Value)
+                : float.MaxValue / 4f;
+            if (distance >= bestDistance)
+            {
+                continue;
+            }
+
+            bestDistance = distance;
+            compatibleTargetPosition = anchor.Position;
+        }
+
+        if (compatibleTargetPosition.HasValue || foundCompatible)
+        {
+            rejection = "ok";
+            return true;
+        }
+
+        rejection = priorityMatched ? "store" : "priority";
+        return false;
+    }
+
+    private sealed class DestinationAnchor
+    {
+        public DestinationAnchor(IStorage storage, Vector3? position)
+        {
+            Storage = storage;
+            Position = position;
+        }
+
+        public IStorage Storage { get; }
+
+        public Vector3? Position { get; }
     }
 
     private static void CaptureDetail(List<string> details, string value)

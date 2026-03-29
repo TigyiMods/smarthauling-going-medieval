@@ -10,7 +10,10 @@ namespace SmartHauling.Runtime.Infrastructure.World;
 
 internal sealed class GameHaulWorldSnapshotProvider : IHaulWorldSnapshotProvider
 {
-    private const float StoredPileSnapshotLifetimeSeconds = 1f;
+    private const float CentralSourceSnapshotLifetimeSeconds = 0.5f;
+    private const float KnownPileSnapshotLifetimeSeconds = 3f;
+    private const int StoredPileSweepChunkSize = 192;
+    private const int StoredPileColdStartSweepMultiplier = 4;
 
     private static readonly PropertyInfo? CreaturesProperty =
         AccessTools.Property(typeof(CreatureManager), "Creatures");
@@ -27,31 +30,55 @@ internal sealed class GameHaulWorldSnapshotProvider : IHaulWorldSnapshotProvider
     private static readonly PropertyInfo PilesToReStoreProperty =
         AccessTools.Property(typeof(ResourcePileHaulingManager), "PilesToReStore")!;
 
-    private readonly object storedPileSnapshotSyncRoot = new();
-    private IReadOnlyList<ResourcePileInstance> cachedStoredPileCandidates = Array.Empty<ResourcePileInstance>();
-    private float cachedStoredPileCandidatesExpiresAt;
+    private readonly object centralSourceSnapshotSyncRoot = new();
+    private readonly IncrementalPredicateSetCache<ResourcePileInstance> storedPileCandidateCache =
+        new(
+            KnownPileSnapshotLifetimeSeconds,
+            StoredPileSweepChunkSize,
+            StoredPileColdStartSweepMultiplier,
+            ReferenceEqualityComparer<ResourcePileInstance>.Instance);
+    private IReadOnlyList<ResourcePileInstance> cachedCentralHaulSources = Array.Empty<ResourcePileInstance>();
+    private float cachedCentralHaulSourcesExpiresAt;
 
     public IReadOnlyList<ResourcePileInstance> GetCentralHaulSourcePiles()
     {
+        var now = RuntimeServices.Clock.RealtimeSinceStartup;
+        lock (centralSourceSnapshotSyncRoot)
+        {
+            if (cachedCentralHaulSourcesExpiresAt > now)
+            {
+                return cachedCentralHaulSources;
+            }
+        }
+
         var haulingManager = MonoSingleton<ResourcePileHaulingManager>.Instance;
         var preferredCandidates = new HashSet<ResourcePileInstance>(ReferenceEqualityComparer<ResourcePileInstance>.Instance);
+        var hasExplicitReStoreCandidates = false;
 
         if (haulingManager != null)
         {
             AddPileSequence(preferredCandidates, CanBeStoredProperty.GetValue(haulingManager) as IEnumerable);
-            AddPileSequence(preferredCandidates, PilesToReStoreProperty.GetValue(haulingManager) as IEnumerable);
+            hasExplicitReStoreCandidates = AddPileSequence(preferredCandidates, PilesToReStoreProperty.GetValue(haulingManager) as IEnumerable) > 0;
         }
 
-        var mergedCandidates = CentralHaulSourceFilter.MergeCandidates(
-            preferredCandidates,
-            GetStoredPileCandidatesSnapshot(),
-            pile => pile != null,
-            ReferenceEqualityComparer<ResourcePileInstance>.Instance);
+        var sourceCandidates = hasExplicitReStoreCandidates
+            ? preferredCandidates
+            : CentralHaulSourceFilter.MergeCandidates(
+                preferredCandidates,
+                GetStoredPileCandidatesSnapshot(now),
+                pile => pile != null,
+                ReferenceEqualityComparer<ResourcePileInstance>.Instance);
 
-        return CentralHaulSourceFilter.FilterWithSingleStorageSnapshot(
-            mergedCandidates,
-            StorageCandidatePlanner.GetAllStoragesSnapshot,
+        var filteredSources = CentralHaulSourceFilter.FilterWithSingleStorageSnapshot(
+            sourceCandidates,
+            StorageStateSnapshotProvider.GetSnapshot,
             HaulSourcePolicy.CanUseAsCentralHaulSource);
+        lock (centralSourceSnapshotSyncRoot)
+        {
+            cachedCentralHaulSources = filteredSources;
+            cachedCentralHaulSourcesExpiresAt = now + CentralSourceSnapshotLifetimeSeconds;
+            return cachedCentralHaulSources;
+        }
     }
 
     public IReadOnlyList<ResourcePileInstance> GetAllKnownPileInstances()
@@ -91,38 +118,31 @@ internal sealed class GameHaulWorldSnapshotProvider : IHaulWorldSnapshotProvider
         }
     }
 
-    private IReadOnlyList<ResourcePileInstance> GetStoredPileCandidatesSnapshot()
+    private IReadOnlyList<ResourcePileInstance> GetStoredPileCandidatesSnapshot(float now)
     {
-        var now = RuntimeServices.Clock.RealtimeSinceStartup;
-        lock (storedPileSnapshotSyncRoot)
-        {
-            if (cachedStoredPileCandidatesExpiresAt > now)
-            {
-                return cachedStoredPileCandidates;
-            }
-
-            cachedStoredPileCandidates = GetAllKnownPileInstances()
-                .Where(pile => pile != null && !pile.HasDisposed && pile.PlacedOnStorage != null)
-                .ToList();
-            cachedStoredPileCandidatesExpiresAt = now + StoredPileSnapshotLifetimeSeconds;
-            return cachedStoredPileCandidates;
-        }
+        return storedPileCandidateCache.GetSnapshot(
+            now,
+            GetAllKnownPileInstances,
+            pile => !pile.HasDisposed && pile.PlacedOnStorage != null);
     }
 
-    private static void AddPileSequence(HashSet<ResourcePileInstance> target, IEnumerable? source)
+    private static int AddPileSequence(HashSet<ResourcePileInstance> target, IEnumerable? source)
     {
         if (source == null)
         {
-            return;
+            return 0;
         }
 
+        var added = 0;
         foreach (var pile in source.OfType<ResourcePileInstance>())
         {
-            if (pile != null && !pile.HasDisposed)
+            if (pile != null && !pile.HasDisposed && target.Add(pile))
             {
-                target.Add(pile);
+                added++;
             }
         }
+
+        return added;
     }
 
     private static IEnumerable<object> GetCreatureEnumerable(CreatureManager manager)

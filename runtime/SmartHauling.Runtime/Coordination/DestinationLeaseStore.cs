@@ -12,6 +12,10 @@ internal static class DestinationLeaseStore
 
     private static readonly object SyncRoot = new();
     private static readonly List<DestinationLease> ActiveLeases = new();
+    private static readonly Dictionary<IStorage, int> ActiveLeasedAmountByStorage =
+        new(ReferenceEqualityComparer<IStorage>.Instance);
+    private static readonly Dictionary<Goal, Dictionary<IStorage, int>> ActiveLeasedAmountByGoal =
+        new(ReferenceEqualityComparer<Goal>.Instance);
 
     public static int GetLeasedAmount(IStorage? storage, Goal? excludingGoal = null)
     {
@@ -23,13 +27,41 @@ internal static class DestinationLeaseStore
         lock (SyncRoot)
         {
             CleanupExpiredLeases();
-            return ActiveLeases
-                .Where(lease =>
-                    lease.Storage != null &&
-                    ReferenceEquals(lease.Storage, storage) &&
-                    lease.Amount > 0 &&
-                    (excludingGoal == null || !ReferenceEquals(lease.Goal, excludingGoal)))
-                .Sum(lease => lease.Amount);
+            var total = ActiveLeasedAmountByStorage.TryGetValue(storage, out var leasedAmount)
+                ? leasedAmount
+                : 0;
+            if (excludingGoal == null)
+            {
+                return total;
+            }
+
+            return Mathf.Max(0, total - GetGoalLeasedAmountUnsafe(storage, excludingGoal));
+        }
+    }
+
+    public static int GetLeasedAmountForGoal(IStorage? storage, Goal? goal)
+    {
+        if (storage == null || goal == null)
+        {
+            return 0;
+        }
+
+        lock (SyncRoot)
+        {
+            CleanupExpiredLeases();
+            return GetGoalLeasedAmountUnsafe(storage, goal);
+        }
+    }
+
+    public static IReadOnlyDictionary<IStorage, int> GetLeasedAmountSnapshot()
+    {
+        lock (SyncRoot)
+        {
+            CleanupExpiredLeases();
+            return ActiveLeasedAmountByStorage.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value,
+                ReferenceEqualityComparer<IStorage>.Instance);
         }
     }
 
@@ -72,7 +104,7 @@ internal static class DestinationLeaseStore
                     continue;
                 }
 
-                ActiveLeases.Add(new DestinationLease(goal, owner, candidate.Storage, amount, expiresAt));
+                TrackLeaseUnsafe(new DestinationLease(goal, owner, candidate.Storage, amount, expiresAt));
                 remaining -= amount;
                 leased += amount;
             }
@@ -126,7 +158,7 @@ internal static class DestinationLeaseStore
                         continue;
                     }
 
-                    ActiveLeases.Add(new DestinationLease(goal, owner, candidate.Storage, amount, expiresAt));
+                    TrackLeaseUnsafe(new DestinationLease(goal, owner, candidate.Storage, amount, expiresAt));
                     remaining -= amount;
                     leased += amount;
                 }
@@ -170,19 +202,114 @@ internal static class DestinationLeaseStore
     private static void CleanupExpiredLeases()
     {
         var now = RuntimeServices.Clock.RealtimeSinceStartup;
-        ActiveLeases.RemoveAll(lease =>
-            lease.Storage == null ||
-            lease.Storage.HasDisposed ||
-            lease.Owner == null ||
-            lease.Owner.HasDisposed ||
-            lease.Goal == null ||
-            lease.Amount <= 0 ||
-            lease.ExpiresAt <= now);
+        var expired = ActiveLeases
+            .Where(lease =>
+                lease.Storage == null ||
+                lease.Storage.HasDisposed ||
+                lease.Owner == null ||
+                lease.Owner.HasDisposed ||
+                lease.Goal == null ||
+                lease.Amount <= 0 ||
+                lease.ExpiresAt <= now)
+            .ToList();
+        foreach (var lease in expired)
+        {
+            UntrackLeaseUnsafe(lease);
+        }
+
+        if (expired.Count > 0)
+        {
+            var expiredSet = new HashSet<DestinationLease>(expired);
+            ActiveLeases.RemoveAll(lease => expiredSet.Contains(lease));
+        }
     }
 
     private static void ReleaseGoalUnsafe(Goal goal)
     {
-        ActiveLeases.RemoveAll(lease => ReferenceEquals(lease.Goal, goal));
+        var released = ActiveLeases
+            .Where(lease => ReferenceEquals(lease.Goal, goal))
+            .ToList();
+        foreach (var lease in released)
+        {
+            UntrackLeaseUnsafe(lease);
+        }
+
+        if (released.Count > 0)
+        {
+            var releasedSet = new HashSet<DestinationLease>(released);
+            ActiveLeases.RemoveAll(lease => releasedSet.Contains(lease));
+        }
+    }
+
+    private static void TrackLeaseUnsafe(DestinationLease lease)
+    {
+        ActiveLeases.Add(lease);
+        AddLeasedAmountUnsafe(ActiveLeasedAmountByStorage, lease.Storage, lease.Amount);
+        if (!ActiveLeasedAmountByGoal.TryGetValue(lease.Goal, out var goalStorageAmounts))
+        {
+            goalStorageAmounts = new Dictionary<IStorage, int>(ReferenceEqualityComparer<IStorage>.Instance);
+            ActiveLeasedAmountByGoal[lease.Goal] = goalStorageAmounts;
+        }
+
+        AddLeasedAmountUnsafe(goalStorageAmounts, lease.Storage, lease.Amount);
+    }
+
+    private static void UntrackLeaseUnsafe(DestinationLease lease)
+    {
+        SubtractLeasedAmountUnsafe(ActiveLeasedAmountByStorage, lease.Storage, lease.Amount);
+        if (!ActiveLeasedAmountByGoal.TryGetValue(lease.Goal, out var goalStorageAmounts))
+        {
+            return;
+        }
+
+        SubtractLeasedAmountUnsafe(goalStorageAmounts, lease.Storage, lease.Amount);
+        if (goalStorageAmounts.Count == 0)
+        {
+            ActiveLeasedAmountByGoal.Remove(lease.Goal);
+        }
+    }
+
+    private static int GetGoalLeasedAmountUnsafe(IStorage storage, Goal goal)
+    {
+        return ActiveLeasedAmountByGoal.TryGetValue(goal, out var goalStorageAmounts) &&
+               goalStorageAmounts.TryGetValue(storage, out var leasedAmount)
+            ? leasedAmount
+            : 0;
+    }
+
+    private static void AddLeasedAmountUnsafe(Dictionary<IStorage, int> leasedAmountsByStorage, IStorage storage, int amount)
+    {
+        if (storage == null || amount <= 0)
+        {
+            return;
+        }
+
+        leasedAmountsByStorage[storage] = leasedAmountsByStorage.TryGetValue(storage, out var currentAmount)
+            ? currentAmount + amount
+            : amount;
+    }
+
+    private static void SubtractLeasedAmountUnsafe(Dictionary<IStorage, int> leasedAmountsByStorage, IStorage storage, int amount)
+    {
+        if (storage == null || amount <= 0)
+        {
+            return;
+        }
+
+        if (!leasedAmountsByStorage.TryGetValue(storage, out var currentAmount))
+        {
+            return;
+        }
+
+        var nextAmount = currentAmount - amount;
+        if (nextAmount > 0)
+        {
+            leasedAmountsByStorage[storage] = nextAmount;
+        }
+        else
+        {
+            leasedAmountsByStorage.Remove(storage);
+        }
     }
 
     private sealed class DestinationLease

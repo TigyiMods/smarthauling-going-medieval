@@ -1,5 +1,4 @@
 using HarmonyLib;
-using NSMedieval;
 using NSMedieval.Goap;
 using NSMedieval.Goap.Goals;
 using NSMedieval.State;
@@ -78,7 +77,7 @@ internal static class HaulSourcePolicy
         return ValidatePile(goal, pile) ? "unknown" : "validate";
     }
 
-    public static bool CanUseAsCentralHaulSource(ResourcePileInstance? pile, IEnumerable<IStorage> storageCandidates)
+    public static bool CanUseAsCentralHaulSource(ResourcePileInstance? pile, IEnumerable<StorageStateSnapshotEntry> storageCandidates)
     {
         if (pile == null || pile.HasDisposed)
         {
@@ -102,13 +101,17 @@ internal static class HaulSourcePolicy
             return false;
         }
 
-        return storageCandidates.Any(storage =>
-            storage != null &&
-            !ReferenceEquals(storage, pile.PlacedOnStorage) &&
-            !storage.HasDisposed &&
-            !storage.Underwater &&
-            !storage.IsOnFire &&
-            storage.Priority > sourcePriority &&
-            storage.ResourcesFilter.IsValid(storedResource));
+        return storageCandidates.Any(storageState =>
+            storageState != null &&
+            storageState.IsRoutable &&
+            !ReferenceEquals(storageState.Storage, pile.PlacedOnStorage) &&
+            storageState.Priority > sourcePriority &&
+            storageState.Storage.ResourcesFilter.IsValid(storedResource) &&
+            StorageCapacityEstimator.EstimateCapacity(
+                goal: null,
+                storageState,
+                storedResource,
+                requestedAmount: 1,
+                out _) > 0);
     }
 }

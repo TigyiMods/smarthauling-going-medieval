@@ -80,4 +80,63 @@ public sealed class DiagnosticTraceTests : IDisposable
         Assert.Contains("[test.restart] first-session", File.ReadAllText(firstTraceFilePath));
         Assert.Contains("[test.restart] second-session", File.ReadAllText(secondTraceFilePath));
     }
+
+    [Fact]
+    public void Raw_Factory_WhenTraceIsDisabled_DoesNotEvaluateMessage()
+    {
+        // Arrange
+        var invoked = false;
+
+        // Act
+        DiagnosticTrace.Raw("test.lazy", () =>
+        {
+            invoked = true;
+            return "should-not-log";
+        });
+
+        // Assert
+        Assert.False(invoked);
+    }
+
+    [Fact]
+    public void Info_Factory_WhenCategoryLimitIsExhausted_DoesNotEvaluateMessage()
+    {
+        // Arrange
+        DiagnosticTrace.Configure(DiagnosticLogLevel.Info);
+        DiagnosticTrace.Info("test.limit", "first", 1);
+        var invoked = false;
+
+        // Act
+        DiagnosticTrace.Info("test.limit", () =>
+        {
+            invoked = true;
+            return "second";
+        }, 1);
+
+        // Assert
+        Assert.False(invoked);
+    }
+
+    [Fact]
+    public void EnsureSessionStarted_AfterShutdown_RestartsWriterWithoutNewPluginAwake()
+    {
+        // Arrange
+        var traceFilePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.reactivated.trace.log");
+        DiagnosticTrace.Configure(DiagnosticLogLevel.Trace);
+        DiagnosticTrace.StartSession(traceFilePath);
+        DiagnosticTrace.Raw("test.reactivate", "before-shutdown");
+        Assert.True(DiagnosticTrace.FlushPending(), "Expected the initial trace queue to flush within the timeout.");
+        DiagnosticTrace.Shutdown();
+
+        // Act
+        DiagnosticTrace.EnsureSessionStarted(traceFilePath);
+        DiagnosticTrace.Raw("test.reactivate", "after-shutdown");
+
+        // Assert
+        Assert.True(DiagnosticTrace.FlushPending(), "Expected the reactivated trace queue to flush within the timeout.");
+        DiagnosticTrace.Shutdown();
+        var traceText = File.ReadAllText(traceFilePath);
+        Assert.Contains("[test.reactivate] before-shutdown", traceText);
+        Assert.Contains("[test.reactivate] after-shutdown", traceText);
+    }
 }

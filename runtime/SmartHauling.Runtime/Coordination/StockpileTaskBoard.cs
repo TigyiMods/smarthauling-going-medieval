@@ -79,7 +79,7 @@ internal static class StockpileTaskBoard
             MarkAssignmentsDirty();
             DiagnosticTrace.Info(
                 "haul.plan",
-                $"Board assigned task {best.FirstPile.BlueprintId} to {creature}: taskScore={best.Score:0.0}, claimScore={HaulingDecisionTracePatch.GetBoardClaimScore(creature, best):0.0}",
+                () => $"Board assigned task {best.FirstPile.BlueprintId} to {creature}: taskScore={best.Score:0.0}, claimScore={HaulingDecisionTracePatch.GetBoardClaimScore(creature, best):0.0}",
                 80);
             selected = best;
             return true;
@@ -360,7 +360,7 @@ internal static class StockpileTaskBoard
         MarkAssignmentsDirty();
         DiagnosticTrace.Info(
             "haul.plan",
-            $"Board snapshot refreshed: tasks={PendingTasks.Count}, top=[{HaulingDecisionTracePatch.DescribeTaskSeeds(PendingTasks.Values)}]",
+            () => $"Board snapshot refreshed: tasks={PendingTasks.Count}, top=[{HaulingDecisionTracePatch.DescribeTaskSeeds(PendingTasks.Values)}]",
             40);
     }
 
@@ -382,7 +382,7 @@ internal static class StockpileTaskBoard
 
         DiagnosticTrace.Info(
             "haul.plan",
-            $"Board assignments rebuilt: assigned={PendingAssignments.Count}, seeds={PendingTasks.Count}",
+            () => $"Board assignments rebuilt: assigned={PendingAssignments.Count}, seeds={PendingTasks.Count}",
             40);
     }
 

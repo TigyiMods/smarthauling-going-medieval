@@ -57,10 +57,17 @@ internal static class StockpileMixedSourcePlanner
                 IsNearPlannedSourcePatch(plannedPiles, pile, mixedGroundHarvestExtent))
             .ToList();
 
-        foreach (var pile in mixedCandidates
-                     .OrderBy(candidate => StockpilePileTopology.GetNearestPatchDistance(plannedPiles, candidate))
-                     .ThenBy(candidate => Vector3.Distance(firstPile.GetPosition(), candidate.GetPosition())))
+        var remainingCandidates = mixedCandidates;
+        while (remainingCandidates.Count > 0)
         {
+            var currentAnchor = plannedPiles.LastOrDefault()?.GetPosition() ?? firstPile.GetPosition();
+            var pile = remainingCandidates
+                .OrderBy(candidate => StockpilePileTopology.GetNearestPatchDistance(plannedPiles, candidate))
+                .ThenBy(candidate => Vector3.Distance(currentAnchor, candidate.GetPosition()))
+                .ThenBy(candidate => Vector3.Distance(firstPile.GetPosition(), candidate.GetPosition()))
+                .First();
+            remainingCandidates.Remove(pile);
+
             var storedResource = pile.GetStoredResource();
             if (storedResource == null || storedResource.HasDisposed)
             {

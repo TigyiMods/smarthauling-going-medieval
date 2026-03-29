@@ -37,7 +37,7 @@ internal static class CoordinatedStockpileGoalTriggerPatch
             __instance.ForceNextGoal(new SmartUnloadGoal(__instance));
             DiagnosticTrace.Info(
                 "unload",
-                $"Forced next SmartUnloadGoal for {__instance.AgentOwner}: carry={storageAgent.Storage.GetTotalStoredCount()}",
+                () => $"Forced next SmartUnloadGoal for {__instance.AgentOwner}: carry={storageAgent.Storage.GetTotalStoredCount()}",
                 80);
             return;
         }
@@ -58,12 +58,12 @@ internal static class CoordinatedStockpileGoalTriggerPatch
             {
                 DiagnosticTrace.Raw(
                     "haul.priority",
-                    $"Skipped forced {StockpileGoalId} for {__instance.AgentOwner}: blockingJob={blockingJob.Value}, blockingPriority={blockingPriority:0.##}, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}");
+                    () => $"Skipped forced {StockpileGoalId} for {__instance.AgentOwner}: blockingJob={blockingJob.Value}, blockingPriority={blockingPriority:0.##}, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}");
             }
 
             DiagnosticTrace.Info(
                 "haul.trigger",
-                $"Skipped smart trigger for {__instance.AgentOwner}: reason=priority-gate, blockingJob={blockingJob?.ToString() ?? "<none>"}, blockingPriority={blockingPriority:0.##}, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
+                () => $"Skipped smart trigger for {__instance.AgentOwner}: reason=priority-gate, blockingJob={blockingJob?.ToString() ?? "<none>"}, blockingPriority={blockingPriority:0.##}, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
                 200);
 
             return;
@@ -73,7 +73,7 @@ internal static class CoordinatedStockpileGoalTriggerPatch
         {
             DiagnosticTrace.Info(
                 "haul.trigger",
-                $"Skipped smart trigger for {__instance.AgentOwner}: reason=no-assignable-task, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
+                () => $"Skipped smart trigger for {__instance.AgentOwner}: reason=no-assignable-task, haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}, recent={DescribeRecentGoal(__instance.AgentOwner as CreatureBase)}",
                 200);
             return;
         }
@@ -89,7 +89,7 @@ internal static class CoordinatedStockpileGoalTriggerPatch
         __instance.ForceNextGoal(StockpileGoalId);
         DiagnosticTrace.Info(
             "haul.trigger",
-            $"Forced next {StockpileGoalId} for {__instance.AgentOwner}: haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}, recent={DescribeRecentGoal(creature)}",
+            () => $"Forced next {StockpileGoalId} for {__instance.AgentOwner}: haulingPriority={__instance.GetJobPriority(JobType.Hauling):0.##}, recent={DescribeRecentGoal(creature)}",
             200);
     }
 
@@ -110,12 +110,12 @@ internal static class CoordinatedStockpileGoalTriggerPatch
             {
                 DiagnosticTrace.Raw(
                     "haul.priority",
-                    $"Skipped forced {StockpileUrgentGoalId} for {workerAgent.AgentOwner}: blockingJob={blockingJob.Value}, blockingPriority={blockingPriority:0.##}, urgentPriority={workerAgent.GetJobPriority(JobType.UrgentHaul):0.##}");
+                    () => $"Skipped forced {StockpileUrgentGoalId} for {workerAgent.AgentOwner}: blockingJob={blockingJob.Value}, blockingPriority={blockingPriority:0.##}, urgentPriority={workerAgent.GetJobPriority(JobType.UrgentHaul):0.##}");
             }
 
             DiagnosticTrace.Info(
                 "haul.trigger",
-                $"Skipped smart trigger for {workerAgent.AgentOwner}: reason=urgent-priority-gate, blockingJob={blockingJob?.ToString() ?? "<none>"}, blockingPriority={blockingPriority:0.##}, urgentPriority={workerAgent.GetJobPriority(JobType.UrgentHaul):0.##}, recent={DescribeRecentGoal(creature)}",
+                () => $"Skipped smart trigger for {workerAgent.AgentOwner}: reason=urgent-priority-gate, blockingJob={blockingJob?.ToString() ?? "<none>"}, blockingPriority={blockingPriority:0.##}, urgentPriority={workerAgent.GetJobPriority(JobType.UrgentHaul):0.##}, recent={DescribeRecentGoal(creature)}",
                 200);
             return false;
         }
@@ -123,7 +123,7 @@ internal static class CoordinatedStockpileGoalTriggerPatch
         workerAgent.ForceNextGoal(StockpileUrgentGoalId);
         DiagnosticTrace.Info(
             "haul.trigger",
-            $"Forced next {StockpileUrgentGoalId} for {workerAgent.AgentOwner}: urgentPriority={workerAgent.GetJobPriority(JobType.UrgentHaul):0.##}, recent={DescribeRecentGoal(creature)}",
+            () => $"Forced next {StockpileUrgentGoalId} for {workerAgent.AgentOwner}: urgentPriority={workerAgent.GetJobPriority(JobType.UrgentHaul):0.##}, recent={DescribeRecentGoal(creature)}",
             200);
         return true;
     }

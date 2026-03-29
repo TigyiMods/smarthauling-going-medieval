@@ -77,6 +77,7 @@ internal static class StockpileClusterAugmentor
             firstPile,
             sourcePatchPiles.Where(pile => !knownPiles.Contains(pile)).ToList(),
             firstStorage,
+            preferredDestinationOrder,
             sourceClusterExtent,
             patchSweepExtent,
             patchSweepLinkExtent,

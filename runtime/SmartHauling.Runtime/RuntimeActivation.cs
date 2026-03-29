@@ -13,8 +13,9 @@ internal static class RuntimeActivation
             return;
         }
 
+        DiagnosticTrace.EnsureSessionStarted();
         isActive = true;
-        DiagnosticTrace.Raw("activation", $"Gameplay patches activated: {reason}");
+        DiagnosticTrace.Raw("activation", () => $"Gameplay patches activated: {reason}");
     }
 
     public static void Deactivate(string reason)
@@ -25,6 +26,6 @@ internal static class RuntimeActivation
         }
 
         isActive = false;
-        DiagnosticTrace.Raw("activation", $"Gameplay patches deactivated: {reason}");
+        DiagnosticTrace.Raw("activation", () => $"Gameplay patches deactivated: {reason}");
     }
 }

@@ -1,9 +1,13 @@
+using NSMedieval.State;
 using UnityEngine;
 
 namespace SmartHauling.Runtime;
 
 internal static class HaulingScore
 {
+    private const float PriorityRankBonusPerStep = 18f;
+    private const float ReprioritizationBonusPerStep = 28f;
+
     public static float CalculateMaterializedSelectionScore(
         int pickupBudget,
         int requestedAmount,
@@ -20,10 +24,21 @@ internal static class HaulingScore
         return fillScore + fitScore + pileScore + diversityScore;
     }
 
-    public static float CalculateBoardAssignmentScore(float baseScore, float distanceToSource)
+    public static float CalculateBoardAssignmentScore(
+        float baseScore,
+        float distanceToSource,
+        ZonePriority sourcePriority,
+        ZonePriority targetPriority)
     {
         var proximityBonus = Mathf.Max(0f, 48f - (distanceToSource * 1.5f));
-        return baseScore + proximityBonus;
+        var targetPriorityBonus = GetPriorityRank(targetPriority) * PriorityRankBonusPerStep;
+        var reprioritizationBonus = Mathf.Max(0, GetPriorityRank(targetPriority) - GetPriorityRank(sourcePriority)) * ReprioritizationBonusPerStep;
+        return baseScore + proximityBonus + targetPriorityBonus + reprioritizationBonus;
+    }
+
+    public static float CalculateBoardAssignmentScore(float baseScore, float distanceToSource)
+    {
+        return CalculateBoardAssignmentScore(baseScore, distanceToSource, ZonePriority.None, ZonePriority.None);
     }
 
     public static float CalculateTaskSeedScore(
@@ -43,5 +58,18 @@ internal static class HaulingScore
                diversityBonus +
                pileBonus +
                patchBonus;
+    }
+
+    private static int GetPriorityRank(ZonePriority priority)
+    {
+        return priority switch
+        {
+            ZonePriority.Low => 1,
+            ZonePriority.Medium => 2,
+            ZonePriority.High => 3,
+            ZonePriority.VeryHigh => 4,
+            ZonePriority.Last => 5,
+            _ => 0
+        };
     }
 }
